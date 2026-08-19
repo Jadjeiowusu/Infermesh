@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-consumer
+  labels:
+    app: infermesh-consumer
+spec:
+  replicas: {{ .Values.consumer.replicaCount }}
+  selector:
+    matchLabels:
+      app: infermesh-consumer
+  template:
+    metadata:
+      labels:
+        app: infermesh-consumer
+    spec:
+      containers:
+        - name: consumer
+          image: "{{ .Values.consumer.image.repository }}:{{ .Values.consumer.image.tag }}"
+          ports:
+            - containerPort: 9100
+          env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: {{ .Values.gateway.env.KAFKA_BOOTSTRAP_SERVERS | quote }}
+          resources:
+            {{- toYaml .Values.consumer.resources | nindent 12 }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false

@@ -1,0 +1,40 @@
+gateway:
+  image:
+    repository: infermesh-gateway
+    tag: latest
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 1
+      memory: 512Mi
+  env:
+    MODEL_BACKEND: mock
+    N_MOCK_REPLICAS: "2"
+    KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 70
+    # Phase 3 stretch goal: replace with a custom metric (e.g. in-flight
+    # requests per replica, sourced from infermesh_requests_total) via
+    # Prometheus Adapter, so autoscaling reflects actual queue pressure
+    # instead of CPU.
+  podDisruptionBudget:
+    minAvailable: 1
+
+consumer:
+  image:
+    repository: infermesh-consumer
+    tag: latest
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
