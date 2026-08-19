@@ -2,8 +2,13 @@
 
 - [x] **Phase 0** — Repo scaffold, CI, architecture doc, running skeleton
       (mock backend, gateway, Streamlit playground, docker-compose).
-- [ ] **Phase 1** — Real model serving: llama.cpp or vLLM backend adapter,
-      OpenAI-compatible request/response schema, streaming responses.
+- [x] **Phase 1 (partial)** — vLLM backend adapter + launch/stop scripts for
+      running it against a local NVIDIA GPU (auto-detects VRAM, picks a
+      model that fits). See `docs/LOCAL_GPU_SETUP.md`. HPC path kept as a
+      secondary option in `docs/HPC_SETUP.md` (access there is partial and
+      doesn't allow installing software). Still open: streaming responses,
+      and re-running the Phase 0 chaos test against two real replicas
+      instead of one.
 - [ ] **Phase 2** — Observability: Prometheus metrics from the gateway
       (latency histograms, request counters, queue depth), Grafana dashboard.
 - [ ] **Phase 3** — Kubernetes: Helm chart, 2+ replicas, HPA on custom metric,

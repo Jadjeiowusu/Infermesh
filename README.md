@@ -77,8 +77,10 @@ the metrics consumer, Prometheus, Grafana, and the Streamlit control room at
 `http://localhost:8501`.
 
 To point at a real model instead of the mock backend, set `MODEL_BACKEND=vllm`
-and `VLLM_ENDPOINT=...` (see `docs/DESIGN.md#backends`) — this is how you'd
-run it on a GPU box.
+and `REPLICA_ENDPOINTS=...`. See [`docs/LOCAL_GPU_SETUP.md`](docs/LOCAL_GPU_SETUP.md)
+for running vLLM against your own GPU (the primary path — HPC access here
+is partial and doesn't allow installing software, so
+[`docs/HPC_SETUP.md`](docs/HPC_SETUP.md) is kept as a secondary option only).
 
 ## Status
 
