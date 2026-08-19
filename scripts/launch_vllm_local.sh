@@ -22,6 +22,23 @@ if ! command -v nvidia-smi &> /dev/null; then
     exit 1
 fi
 
+# WSL2-specific: vLLM's v1 engine (GPUModelRunnerV2) hits
+# "RuntimeError: UVA is not available" on WSL2's CUDA passthrough — a
+# confirmed upstream bug (github.com/vllm-project/vllm/issues/47387).
+# VLLM_WSL2_ENABLE_PIN_MEMORY=1 plus --enforce-eager works around it.
+# --enforce-eager disables CUDA graph capture, which is a real latency
+# cost (~2.8s vs compiled mode on a 3B model in testing) — worth its own
+# BENCHMARKS.md entry once compiled mode is viable again (upstream fix
+# permitting). Detect WSL2 and set the env var automatically here so this
+# doesn't have to be rediscovered.
+IS_WSL2=false
+if grep -qi microsoft /proc/version 2>/dev/null; then
+    IS_WSL2=true
+    export VLLM_WSL2_ENABLE_PIN_MEMORY=1
+    echo "WSL2 detected — setting VLLM_WSL2_ENABLE_PIN_MEMORY=1 and --enforce-eager"
+    echo "(works around a confirmed vLLM/WSL2 UVA bug: vllm-project/vllm#47387)"
+fi
+
 VRAM_MB=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits | head -1)
 VRAM_GB=$((VRAM_MB / 1024))
 echo "Detected GPU VRAM: ${VRAM_GB}GB"
@@ -55,6 +72,22 @@ else
     exit 1
 fi
 
+if ! command -v nvcc &> /dev/null; then
+    echo "" >&2
+    echo "WARNING: nvcc not found on PATH. If this fails with" >&2
+    echo "  'Could not find nvcc and default cuda_home=/usr/local/cuda doesn't exist'" >&2
+    echo "you need the CUDA toolkit (not just the driver) — the driver alone isn't" >&2
+    echo "enough because flashinfer JIT-compiles a sampling kernel at first use." >&2
+    echo "On WSL2 Ubuntu:" >&2
+    echo "  wget https://developer.download.nvidia.com/compute/cuda/repos/wsl-ubuntu/x86_64/cuda-keyring_1.1-1_all.deb" >&2
+    echo "  sudo dpkg -i cuda-keyring_1.1-1_all.deb && sudo apt-get update" >&2
+    echo "  sudo apt-get -y install cuda-toolkit   # NOT plain 'cuda' — that pulls a" >&2
+    echo "                                          # conflicting Linux display driver" >&2
+    echo "  export PATH=/usr/local/cuda/bin:\$PATH" >&2
+    echo "  export LD_LIBRARY_PATH=/usr/local/cuda/lib64:\$LD_LIBRARY_PATH" >&2
+    echo "" >&2
+fi
+
 LOG_FILE="$LOG_DIR/vllm-$(date +%Y%m%d-%H%M%S).log"
 echo "Launching vLLM on port $PORT (gpu-memory-utilization=$GPU_MEM_UTIL), logging to $LOG_FILE ..."
 
@@ -67,6 +100,9 @@ VLLM_ARGS=(
 )
 if [[ "$USE_QUANTIZATION" == "true" ]]; then
     VLLM_ARGS+=(--quantization awq)
+fi
+if [[ "$IS_WSL2" == "true" ]]; then
+    VLLM_ARGS+=(--enforce-eager)
 fi
 
 nohup python -m vllm.entrypoints.openai.api_server "${VLLM_ARGS[@]}" \

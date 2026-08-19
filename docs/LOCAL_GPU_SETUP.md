@@ -9,6 +9,68 @@ to build a repeatable demo on. Your own GPU (NVIDIA, 8GB VRAM) is fully
 under your control and needs nothing installed anywhere you don't already
 have permission.
 
+## Windows users: WSL2 required
+
+vLLM does not support native Windows — `pip install vllm` will fail or
+behave unpredictably outside a Linux environment (long-path/build errors
+are typically the first symptom, not the real cause). Run this entire doc
+inside WSL2 (`wsl --install -d Ubuntu-24.04` from an admin PowerShell),
+not directly in PowerShell/cmd. WSL2 uses your existing Windows NVIDIA
+driver via GPU passthrough — no separate driver install needed inside
+WSL2, just verify with `nvidia-smi` once you're in the Ubuntu terminal.
+The bash scripts below (`launch_vllm_local.sh` etc.) also require a real
+shell, which is another reason this needs to run inside WSL2 rather than
+PowerShell.
+
+**Work inside WSL2's native filesystem (`~/`), not `/mnt/c/...`.** The
+Windows-mounted path is 3-5x slower for file-heavy work (model downloads,
+pip installs) and can still trip path-length issues since it's NTFS
+underneath. Clone/build everything under your Linux home directory.
+
+## Two WSL2-specific bugs you will hit, and how they're handled
+
+Both are already worked around automatically by `launch_vllm_local.sh`
+(WSL2-detection logic added after hitting these for real) — documented
+here so the reasoning isn't a black box if something changes upstream.
+
+**1. `RuntimeError: UVA is not available`** — vLLM's newer v1 engine
+(`GPUModelRunnerV2`) tries to use CUDA's Unified Virtual Addressing, which
+WSL2's GPU passthrough doesn't expose the same way native Linux does.
+Confirmed upstream bug:
+[vllm-project/vllm#47387](https://github.com/vllm-project/vllm/issues/47387)
+(same GPU class — RTX 4050/4070 laptop — same traceback). Workaround:
+`VLLM_WSL2_ENABLE_PIN_MEMORY=1` env var plus `--enforce-eager`. The
+launch script sets both automatically when it detects WSL2
+(`grep -qi microsoft /proc/version`).
+
+**2. `Could not find nvcc and default cuda_home='/usr/local/cuda' doesn't
+exist`** — happens *after* the model loads, when `flashinfer` tries to
+JIT-compile its sampling kernel. The NVIDIA driver (what `nvidia-smi`
+needs) is not the same thing as the CUDA *toolkit* (what `nvcc` needs) —
+WSL2 gives you GPU passthrough via the driver alone, but the compiler
+toolchain still needs a real install:
+
+```bash
+wget https://developer.download.nvidia.com/compute/cuda/repos/wsl-ubuntu/x86_64/cuda-keyring_1.1-1_all.deb
+sudo dpkg -i cuda-keyring_1.1-1_all.deb
+sudo apt-get update
+sudo apt-get -y install cuda-toolkit   # NOT plain 'cuda' — that package tries
+                                        # to install a conflicting Linux display
+                                        # driver; WSL2 uses the Windows driver
+export PATH=/usr/local/cuda/bin:$PATH
+export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+```
+
+Add those two `export` lines to `~/.bashrc` for persistence — but check
+first whether anything else in `.bashrc` (a conda/venv auto-activation
+hook, for instance) resets `PATH` on every new shell, since that can
+silently undo them.
+
+**Status: verified working end to end** on an RTX 4070 Laptop GPU (8GB)
+with both workarounds — `Qwen/Qwen2.5-3B-Instruct-AWQ` served real
+completions through the gateway, confirmed via `backend: "vllm"` in the
+response. See `docs/BENCHMARKS.md` for the first real numbers.
+
 ## 1. Install vLLM
 
 ```bash
@@ -37,14 +99,27 @@ Stop it with `./scripts/stop_vllm_local.sh`.
 
 ## 3. Point the gateway at it
 
+Use a **separate** venv from vLLM's — they have very different dependency
+trees, don't mix them (see `docs/DESIGN.md`).
+
 ```bash
-MODEL_BACKEND=vllm \
-REPLICA_ENDPOINTS=http://localhost:8000 \
-VLLM_MODEL=Qwen/Qwen2.5-3B-Instruct-AWQ \
-PYTHONPATH=. python -m uvicorn gateway.app.main:app --port 9000
+sudo apt install -y python3-venv   # if this venv's bin/ ends up missing pip
+python3 -m venv .venv-gateway
+~/Infermesh/.venv-gateway/bin/pip install -r gateway/requirements.txt
+MODEL_BACKEND=vllm REPLICA_ENDPOINTS=http://localhost:8000 VLLM_MODEL=Qwen/Qwen2.5-3B-Instruct-AWQ PYTHONPATH=. \
+  ~/Infermesh/.venv-gateway/bin/python -m uvicorn gateway.app.main:app --port 9000
 ```
 
-(Gateway on 9000, vLLM on 8000 — both local, so they need different ports.)
+Two things worth knowing if this venv misbehaves:
+- **`python3 -m venv` can silently create a venv with no `pip`** if the
+  `python3-venv` apt package isn't installed — `ls .venv-gateway/bin/`
+  should show `pip`/`pip3` alongside `python`; if it doesn't, `apt install
+  python3-venv` and recreate the venv.
+- **Calling binaries by absolute path (`.venv-gateway/bin/pip`,
+  `.venv-gateway/bin/python`)** rather than relying on `source
+  .venv-gateway/bin/activate` sidesteps any shell hook (e.g. a
+  conda/venv auto-activation script in `.bashrc` for another project)
+  that might silently override `PATH` after activation.
 
 ## 4. Sanity check
 

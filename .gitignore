@@ -1,0 +1,29 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# virtualenvs — covers .venv, .venv-vllm, .venv-gateway, and any other
+# .venv-* naming used across the various local backend setups
+.venv/
+.venv-*/
+venv/
+
+.env
+
+# runtime logs from the launch_*.sh scripts (vllm.log, llamacpp.log, etc.)
+logs/
+
+# loadtest/eval output
+loadtest/results/
+eval/results/*.json
+
+# stray downloaded installers (e.g. cuda-keyring_*.deb) that sometimes
+# end up in the repo root when following setup docs
+*.deb
+
+# OS/editor cruft
+.DS_Store
+.vscode/
+.idea/
