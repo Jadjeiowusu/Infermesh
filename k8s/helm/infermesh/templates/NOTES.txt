@@ -1,0 +1,22 @@
+InferMesh deployed.
+
+Check rollout status:
+  kubectl rollout status deployment/{{ .Release.Name }}-gateway
+
+Port-forward the gateway to test it locally:
+  kubectl port-forward svc/{{ .Release.Name }}-gateway 8000:8000
+  curl -X POST http://localhost:8000/v1/completions \
+    -H "Content-Type: application/json" \
+    -d '{"prompt": "hello", "max_tokens": 32}'
+
+Watch pods (useful during a chaos test or rollout):
+  kubectl get pods -l app=infermesh-gateway -w
+
+{{- if .Values.gateway.canary.enabled }}
+
+Canary is ENABLED — {{ .Values.gateway.canary.replicaCount }} canary pod(s)
+alongside {{ .Values.gateway.replicaCount }} main pod(s), sharing the same
+Service. Traffic split is approximate (by pod count), not exact percentage.
+{{- end }}
+
+See k8s/DEPLOY.md for the full deploy/verify/chaos-test walkthrough.

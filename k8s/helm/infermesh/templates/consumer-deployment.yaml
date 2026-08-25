@@ -17,13 +17,22 @@ spec:
       containers:
         - name: consumer
           image: "{{ .Values.consumer.image.repository }}:{{ .Values.consumer.image.tag }}"
+          imagePullPolicy: {{ .Values.consumer.image.pullPolicy | default "IfNotPresent" }}
           ports:
             - containerPort: 9100
           env:
             - name: KAFKA_BOOTSTRAP_SERVERS
-              value: {{ .Values.gateway.env.KAFKA_BOOTSTRAP_SERVERS | quote }}
+              value: "{{ .Release.Name }}-kafka:9092"
           resources:
             {{- toYaml .Values.consumer.resources | nindent 12 }}
+          # No HTTP health endpoint on the consumer (only /metrics) — a TCP
+          # check confirms the process is at least listening, which is a
+          # weaker signal than the gateway's /health but better than nothing.
+          readinessProbe:
+            tcpSocket:
+              port: 9100
+            initialDelaySeconds: 5
+            periodSeconds: 10
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000

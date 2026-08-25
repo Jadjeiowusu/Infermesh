@@ -2,6 +2,7 @@ gateway:
   image:
     repository: infermesh-gateway
     tag: latest
+    pullPolicy: IfNotPresent
   replicaCount: 2
   resources:
     requests:
@@ -13,23 +14,41 @@ gateway:
   env:
     MODEL_BACKEND: mock
     N_MOCK_REPLICAS: "2"
+    # NOTE: this value is intentionally unused for k8s — see
+    # gateway-deployment.yaml, which computes the real in-cluster DNS name
+    # from {{ .Release.Name }} instead. Left here only so this section
+    # still doubles as a reference for the docker-compose-equivalent
+    # value.
     KAFKA_BOOTSTRAP_SERVERS: kafka:9092
   autoscaling:
     enabled: true
     minReplicas: 2
     maxReplicas: 8
     targetCPUUtilizationPercentage: 70
-    # Phase 3 stretch goal: replace with a custom metric (e.g. in-flight
-    # requests per replica, sourced from infermesh_requests_total) via
-    # Prometheus Adapter, so autoscaling reflects actual queue pressure
-    # instead of CPU.
+    # Phase 3 stretch goal, not yet implemented: replace with a custom
+    # metric (infermesh_replica_in_flight, already exposed since Phase 2)
+    # via Prometheus Adapter, so autoscaling reflects actual queue
+    # pressure instead of CPU. Requires prometheus-adapter installed
+    # separately and a currently-unwritten values.yaml on top of it —
+    # tracked in docs/ROADMAP.md, not attempted here to avoid shipping
+    # untested custom-metrics-API YAML.
   podDisruptionBudget:
     minAvailable: 1
+  canary:
+    # Disabled by default. When enabled, deploys a second small Deployment
+    # (gateway-canary-deployment.yaml) sharing the same Service selector,
+    # so a fraction of traffic reaches the canary's image/tag without
+    # touching the main rollout. See k8s/DEPLOY.md#canary-rollout.
+    enabled: false
+    replicaCount: 1
+    image:
+      tag: latest
 
 consumer:
   image:
     repository: infermesh-consumer
     tag: latest
+    pullPolicy: IfNotPresent
   replicaCount: 1
   resources:
     requests:
@@ -38,3 +57,29 @@ consumer:
     limits:
       cpu: 500m
       memory: 256Mi
+
+# Demo-scoped Kafka/Zookeeper — single replica, no persistent storage. See
+# the caveat comments in kafka-deployment.yaml / zookeeper-deployment.yaml.
+kafka:
+  image:
+    repository: confluentinc/cp-kafka
+    tag: 7.6.1
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 500m
+      memory: 768Mi
+
+zookeeper:
+  image:
+    repository: confluentinc/cp-zookeeper
+    tag: 7.6.1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 250m
+      memory: 384Mi

@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-zookeeper
+  labels:
+    app: infermesh-zookeeper
+spec:
+  # Single replica, no PVC — fine for a demo/portfolio cluster where losing
+  # Zookeeper state on a pod restart is an acceptable tradeoff. Do not
+  # treat this as a template for a real deployment; a StatefulSet with
+  # persistent storage (or an actual Kafka operator) is the correct answer
+  # there.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: infermesh-zookeeper
+  template:
+    metadata:
+      labels:
+        app: infermesh-zookeeper
+    spec:
+      containers:
+        - name: zookeeper
+          image: "{{ .Values.zookeeper.image.repository }}:{{ .Values.zookeeper.image.tag }}"
+          ports:
+            - containerPort: 2181
+          env:
+            - name: ZOOKEEPER_CLIENT_PORT
+              value: "2181"
+          resources:
+            {{- toYaml .Values.zookeeper.resources | nindent 12 }}

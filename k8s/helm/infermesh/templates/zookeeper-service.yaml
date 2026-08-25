@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-zookeeper
+spec:
+  selector:
+    app: infermesh-zookeeper
+  ports:
+    - port: 2181
+      targetPort: 2181
+  type: ClusterIP

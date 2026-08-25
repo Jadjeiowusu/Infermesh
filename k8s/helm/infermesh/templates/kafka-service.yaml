@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-kafka
+spec:
+  selector:
+    app: infermesh-kafka
+  ports:
+    - port: 9092
+      targetPort: 9092
+  type: ClusterIP

@@ -36,8 +36,26 @@
       assert the metrics actually move, not just that they're declared.
       Known gap: the `status="error"` path can't yet identify which
       replica failed (see `observability/grafana-dashboards/README.md`).
-- [ ] **Phase 3** — Kubernetes: Helm chart, 2+ replicas, HPA on custom metric,
-      liveness/readiness probes, PodDisruptionBudget, canary rollout.
+- [ ] **Phase 3 (built, not yet verified live)** — Helm chart extended:
+      fixed a real gap (`imagePullPolicy` was unset, which would have
+      caused `ImagePullBackOff` on locally-built minikube images since
+      `latest` defaults to `Always`), added Kafka/Zookeeper deployments
+      (previously docker-compose-only, so the chart had nothing for the
+      gateway to actually talk to), a Service for the consumer, an
+      explicit zero-downtime rolling-update strategy, and a basic
+      label-based canary deployment (`gateway.canary.enabled`, off by
+      default — traffic split by pod count, not exact percentage; a real
+      weighted/progressive rollout needs Argo Rollouts or Flagger, out of
+      scope here). Full walkthrough in `k8s/DEPLOY.md`, including running
+      the real chaos test (`chaos/kill_k8s_pod.sh`, built in Phase 0,
+      unused until now) against an actual pod instead of the mock
+      backend's in-process health flag. Not marked done because none of
+      it has run against a live cluster yet — that's the next step.
+      Known gaps, tracked rather than hidden: no Prometheus/Grafana
+      in-cluster (stays in `docker compose` from Phase 2), HPA still
+      scales on CPU not the custom `infermesh_replica_in_flight` metric
+      exposed since Phase 2, Kafka/Zookeeper are single-replica/no
+      persistent storage (demo-scoped only).
 - [ ] **Phase 4** — Independent Kafka consumers. The event pipeline itself
       (gateway emits per-request events, one consumer aggregates them into
       metrics) already exists since Phase 0 and is now visualized in
