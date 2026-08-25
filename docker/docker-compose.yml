@@ -49,13 +49,32 @@ services:
     ports:
       - "9100:9100"
 
+  event-archiver:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.archiver
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      ARCHIVER_METRICS_PORT: "9101"
+    ports:
+      - "9101:9101"
+    volumes:
+      # Named volume, not a bind mount — the archive log survives
+      # container restarts/rebuilds but isn't tied to a specific host
+      # path. Inspect it with: docker compose exec event-archiver cat
+      # /data/archived_events.jsonl
+      - archive-data:/data
+
   prometheus:
     image: prom/prometheus:v2.53.0
     volumes:
       - ../observability/prometheus:/etc/prometheus
     ports:
       - "9090:9090"
-    depends_on: [gateway, metrics-consumer]
+    depends_on: [gateway, metrics-consumer, event-archiver]
 
   grafana:
     image: grafana/grafana:11.1.0
@@ -77,3 +96,6 @@ services:
     ports:
       - "8501:8501"
     depends_on: [gateway]
+
+volumes:
+  archive-data:

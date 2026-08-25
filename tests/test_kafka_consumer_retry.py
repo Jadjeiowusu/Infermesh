@@ -1,14 +1,17 @@
 """
-Tests the retry-with-backoff behavior added to kafka/consumer/aggregator.py
-after discovering (via a real Phase 3 Kubernetes deployment) that the
-consumer crashed outright if Kafka wasn't ready yet at pod startup.
+Tests the retry-with-backoff behavior in kafka/consumer/retry.py, shared
+by both kafka/consumer/aggregator.py and kafka/consumer/archiver.py.
+Originally added to aggregator.py directly after discovering (via a real
+Phase 3 Kubernetes deployment) that the consumer crashed outright if
+Kafka wasn't ready yet at pod startup; extracted to its own module in
+Phase 4 once a second consumer needed the identical fix.
 """
 
 from unittest.mock import AsyncMock
 
 import pytest
 
-from kafka.consumer.aggregator import wait_for_kafka_and_start
+from kafka.consumer.retry import wait_for_kafka_and_start
 
 
 @pytest.mark.asyncio

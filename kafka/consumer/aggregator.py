@@ -3,6 +3,11 @@ Consumes `inference.events` and re-exposes rolling aggregates as Prometheus
 metrics on :9100/metrics. Kept as a separate process/pod from the gateway
 deliberately (see docs/DESIGN.md#event-pipeline): the metrics path can fall
 behind or restart without touching request serving.
+
+This is one of (now) two independent consumers of the same topic — see
+kafka/consumer/archiver.py for the other, and docs/ROADMAP.md Phase 4 for
+why having two matters (proving the event stream is genuinely decoupled,
+not just "one consumer happens to work").
 """
 
 from __future__ import annotations
@@ -15,6 +20,8 @@ import os
 from aiokafka import AIOKafkaConsumer
 from prometheus_client import Counter, Histogram, start_http_server
 
+from kafka.consumer.retry import wait_for_kafka_and_start
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("infermesh.kafka_consumer")
 
@@ -25,35 +32,6 @@ COMPLETION_LATENCY = Histogram(
     "infermesh_backend_latency_ms", "Per-replica backend latency (ms)", ["replica_id", "backend"],
     buckets=(25, 50, 100, 250, 500, 1000, 2500, 5000, 10000),
 )
-
-
-async def wait_for_kafka_and_start(consumer: AIOKafkaConsumer, max_attempts: int = 30,
-                                    base_delay: float = 2.0, max_delay: float = 30.0) -> None:
-    """
-    Retries consumer.start() with backoff instead of letting a Kafka-not-ready
-    error crash the whole process. Discovered as a real gap during Phase 3
-    k8s testing: the gateway's EventEmitter is deliberately fail-soft against
-    Kafka being briefly unavailable (see docs/DESIGN.md), but this consumer's
-    connection had no equivalent protection — it crashed outright if Kafka
-    wasn't ready yet (a real, observed startup-ordering race in Kubernetes,
-    where this pod can start before Kafka/Zookeeper are ready), relying on
-    Kubernetes' CrashLoopBackOff to eventually retry it. That "worked" but is
-    noisy and slower than necessary — this waits in-process instead.
-    """
-    for attempt in range(1, max_attempts + 1):
-        try:
-            await consumer.start()
-            return
-        except Exception as exc:  # noqa: BLE001 - any connection failure should retry, not crash
-            if attempt == max_attempts:
-                logger.error("Giving up connecting to Kafka after %d attempts", max_attempts)
-                raise
-            delay = min(base_delay * attempt, max_delay)
-            logger.warning(
-                "Kafka not ready yet (attempt %d/%d): %s — retrying in %.1fs",
-                attempt, max_attempts, exc, delay,
-            )
-            await asyncio.sleep(delay)
 
 
 async def run() -> None:

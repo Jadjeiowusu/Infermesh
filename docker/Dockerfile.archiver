@@ -1,0 +1,30 @@
+FROM python:3.12-slim AS build
+
+WORKDIR /app
+COPY kafka/consumer/requirements.txt kafka/consumer/requirements.txt
+RUN python -m venv /venv \
+    && /venv/bin/pip install --no-cache-dir --upgrade pip \
+    && /venv/bin/pip install --no-cache-dir -r kafka/consumer/requirements.txt
+
+FROM python:3.12-slim AS runtime
+
+RUN useradd --create-home --uid 1000 appuser
+WORKDIR /app
+
+COPY --from=build /venv /venv
+COPY kafka/ kafka/
+
+ENV PATH="/venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app \
+    ARCHIVE_LOG_PATH=/data/archived_events.jsonl
+
+# /data is where the archive log lives — mount a volume here in
+# docker-compose/k8s, or it's lost on every container restart, which
+# would defeat the entire point of an "archive."
+RUN mkdir -p /data && chown appuser:appuser /data
+
+USER appuser
+EXPOSE 9101
+
+CMD ["python", "kafka/consumer/archiver.py"]

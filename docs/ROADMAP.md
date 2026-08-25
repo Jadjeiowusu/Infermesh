@@ -87,15 +87,32 @@
       exposed since Phase 2, Kafka/Zookeeper are single-replica/no
       persistent storage (demo-scoped only, and confirmed disruptive to
       the consumer on recreation, per the retry-fix story above).
-- [ ] **Phase 4** — Independent Kafka consumers. The event pipeline itself
-      (gateway emits per-request events, one consumer aggregates them into
-      metrics) already exists since Phase 0 and is now visualized in
-      Phase 2's dashboard — what's still open is proving a *second*,
-      independent consumer group can subscribe to the same
-      `inference.events` topic without touching the metrics consumer
-      (e.g. an eval-pipeline consumer, per the original design intent in
-      `docs/DESIGN.md`), which is the actual test of "decoupled event
-      stream" rather than just "one consumer works."
+- [ ] **Phase 4 (built, not yet verified live)** — Second, independent
+      Kafka consumer: `kafka/consumer/archiver.py`, its own consumer
+      group (`infermesh-event-archiver`), writes every event to a durable
+      JSONL log — proof the topic supports genuine pub-sub decoupling,
+      not just "one consumer works." Refactored the Kafka retry-with-backoff
+      fix (`wait_for_kafka_and_start`, from the Phase 3 consumer bug) into
+      a shared `kafka/consumer/retry.py` rather than duplicating it a
+      second time, since the archiver needed the identical protection.
+      Ran the archiver process directly against an unreachable Kafka in
+      this environment and confirmed it logs warnings and retries with
+      backoff instead of crashing — same fix, second consumer, same
+      correct behavior. Unit-tested (`tests/test_archiver.py`,
+      `tests/test_kafka_consumer_retry.py` now imports the shared
+      module). Wired into `docker-compose.yml` (own Prometheus port
+      9101, a named Docker volume so the archive log survives container
+      restarts — unlike Kafka/Zookeeper's demo-scoped ephemeral storage)
+      and into `observability/prometheus/prometheus.yml`'s scrape
+      config. Not marked done because the actual pub-sub claim — both
+      consumers receiving the same events independently, at the same
+      time, against a real broker — hasn't been observed live yet; that
+      needs `docker compose up` and sending real traffic through the
+      gateway while watching both `localhost:9100/metrics` and
+      `localhost:9101/metrics` move together, plus checking
+      `archived_events.jsonl` for the actual event content.
+      Known gap: not yet added to the Kubernetes Helm chart (Phase 3) —
+      docker-compose only for now, noted rather than silently skipped.
 - [ ] **Phase 5** — Load testing (Locust) + optimization loop, written up in
       `docs/BENCHMARKS.md` with before/after numbers per change.
 - [ ] **Phase 6** — Eval harness wired into CI, chaos scripts + observed
