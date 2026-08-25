@@ -36,26 +36,42 @@
       assert the metrics actually move, not just that they're declared.
       Known gap: the `status="error"` path can't yet identify which
       replica failed (see `observability/grafana-dashboards/README.md`).
-- [ ] **Phase 3 (built, not yet verified live)** — Helm chart extended:
-      fixed a real gap (`imagePullPolicy` was unset, which would have
-      caused `ImagePullBackOff` on locally-built minikube images since
-      `latest` defaults to `Always`), added Kafka/Zookeeper deployments
-      (previously docker-compose-only, so the chart had nothing for the
-      gateway to actually talk to), a Service for the consumer, an
-      explicit zero-downtime rolling-update strategy, and a basic
-      label-based canary deployment (`gateway.canary.enabled`, off by
-      default — traffic split by pod count, not exact percentage; a real
+- [x] **Phase 3** — Deployed to a real minikube cluster and verified live,
+      not just built: 2 gateway pods + consumer + Kafka/Zookeeper all
+      reached `Running`, a request through `kubectl port-forward` returned
+      a real response from an in-cluster pod, and the actual chaos test
+      (`chaos/kill_k8s_pod.sh`, built in Phase 0, unused until now) killed
+      a live gateway pod while **40/40 concurrent requests kept returning
+      HTTP 200** — a stronger, more directly measured result than Phase
+      0's mock-backend version. Replacement pod reached Ready in ~8s. Full
+      results in `chaos/RESULTS.md` Test 2; `docs/SLO.md` updated with the
+      real numbers.
+      Helm chart work: fixed a real gap (`imagePullPolicy` was unset,
+      which would have caused `ImagePullBackOff` on locally-built minikube
+      images since `latest` defaults to `Always`), added Kafka/Zookeeper
+      deployments (previously docker-compose-only — the chart had nothing
+      for the gateway to talk to), a Service for the consumer, an explicit
+      zero-downtime rolling-update strategy, and a basic label-based
+      canary deployment (`gateway.canary.enabled`, off by default —
+      traffic split by pod count, not exact percentage; a real
       weighted/progressive rollout needs Argo Rollouts or Flagger, out of
-      scope here). Full walkthrough in `k8s/DEPLOY.md`, including running
-      the real chaos test (`chaos/kill_k8s_pod.sh`, built in Phase 0,
-      unused until now) against an actual pod instead of the mock
-      backend's in-process health flag. Not marked done because none of
-      it has run against a live cluster yet — that's the next step.
+      scope here).
+      A second real gap was found *during* this live test, not just
+      predicted: the consumer pod crash-looped 4 times on first deploy
+      (`CrashLoopBackOff`) because its Kafka connection had no retry
+      logic, unlike the gateway's deliberately fail-soft `EventEmitter`
+      from Phase 0. Fixed with `wait_for_kafka_and_start()` (retry with
+      backoff), tested in `tests/test_kafka_consumer_retry.py` — this fix
+      has not yet been rebuilt/redeployed to the live cluster, so the
+      *fix* itself is unverified live even though the *problem* was.
       Known gaps, tracked rather than hidden: no Prometheus/Grafana
       in-cluster (stays in `docker compose` from Phase 2), HPA still
       scales on CPU not the custom `infermesh_replica_in_flight` metric
       exposed since Phase 2, Kafka/Zookeeper are single-replica/no
-      persistent storage (demo-scoped only).
+      persistent storage (demo-scoped only), and the PDB's actual
+      enforcement (`kubectl drain --dry-run=server`) hasn't been checked
+      yet — `kill_k8s_pod.sh` uses direct pod deletion, which PDBs don't
+      govern.
 - [ ] **Phase 4** — Independent Kafka consumers. The event pipeline itself
       (gateway emits per-request events, one consumer aggregates them into
       metrics) already exists since Phase 0 and is now visualized in

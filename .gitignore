@@ -27,3 +27,5 @@ eval/results/*.json
 .DS_Store
 .vscode/
 .idea/
+minikube-linux-amd64
+kubectl
