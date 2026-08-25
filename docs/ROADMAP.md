@@ -22,12 +22,31 @@
       responses, and re-running the Phase 0 chaos test against two real
       replicas instead of one (works for either backend once a second
       instance exists).
-- [ ] **Phase 2** — Observability: Prometheus metrics from the gateway
-      (latency histograms, request counters, queue depth), Grafana dashboard.
+- [x] **Phase 2** — Prometheus metrics from the gateway: latency
+      histogram (P50/P95/P99 via `histogram_quantile`), request counters
+      by status/replica/backend, token throughput counters, and
+      live per-replica gauges (in-flight requests, circuit breaker state,
+      consecutive failures) via a custom collector
+      (`gateway/app/main.py: RouterStateCollector`) that reads
+      `router.status()` at scrape time — no Gauge-syncing code needed in
+      the request path. Grafana dashboard (`observability/grafana-
+      dashboards/infermesh-overview.json`) auto-provisions on `docker
+      compose up` via `observability/grafana-provisioning/`. Covered by
+      real tests (`tests/test_metrics.py`) that hit `/v1/completions` and
+      assert the metrics actually move, not just that they're declared.
+      Known gap: the `status="error"` path can't yet identify which
+      replica failed (see `observability/grafana-dashboards/README.md`).
 - [ ] **Phase 3** — Kubernetes: Helm chart, 2+ replicas, HPA on custom metric,
       liveness/readiness probes, PodDisruptionBudget, canary rollout.
-- [ ] **Phase 4** — Kafka event pipeline: gateway emits per-request events,
-      consumer aggregates into rolling metrics store.
+- [ ] **Phase 4** — Independent Kafka consumers. The event pipeline itself
+      (gateway emits per-request events, one consumer aggregates them into
+      metrics) already exists since Phase 0 and is now visualized in
+      Phase 2's dashboard — what's still open is proving a *second*,
+      independent consumer group can subscribe to the same
+      `inference.events` topic without touching the metrics consumer
+      (e.g. an eval-pipeline consumer, per the original design intent in
+      `docs/DESIGN.md`), which is the actual test of "decoupled event
+      stream" rather than just "one consumer works."
 - [ ] **Phase 5** — Load testing (Locust) + optimization loop, written up in
       `docs/BENCHMARKS.md` with before/after numbers per change.
 - [ ] **Phase 6** — Eval harness wired into CI, chaos scripts + observed
