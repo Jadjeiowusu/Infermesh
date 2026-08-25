@@ -149,8 +149,17 @@ what this does.
   metric — see the comment in `values.yaml` under `gateway.autoscaling`
 - Kafka/Zookeeper are single-replica, no persistent storage — fine for a
   demo, not how you'd run them for real
-- No `initContainer` enforcing startup order (gateway before Kafka is
-  ready) — relies on the app's own fail-soft behavior instead
+- ~~No `initContainer` enforcing startup order~~ — **confirmed and fixed**
+  during real testing: the consumer pod crash-looped 4 times on first
+  deploy before Kafka became ready (`CrashLoopBackOff`), because
+  `kafka/consumer/aggregator.py`'s Kafka connection had no retry logic —
+  unlike the gateway's `EventEmitter`, which was deliberately fail-soft
+  from Phase 0. Added `wait_for_kafka_and_start()` (retry with backoff,
+  tested in `tests/test_kafka_consumer_retry.py`) so the consumer waits
+  in-process instead of relying on Kubernetes to restart it repeatedly.
+  The gateway itself needed no such fix — it was already fine, since a
+  request simply gets served without an emitted event if Kafka isn't up
+  yet, exactly as designed.
 
 ## Tearing down
 

@@ -27,6 +27,35 @@ COMPLETION_LATENCY = Histogram(
 )
 
 
+async def wait_for_kafka_and_start(consumer: AIOKafkaConsumer, max_attempts: int = 30,
+                                    base_delay: float = 2.0, max_delay: float = 30.0) -> None:
+    """
+    Retries consumer.start() with backoff instead of letting a Kafka-not-ready
+    error crash the whole process. Discovered as a real gap during Phase 3
+    k8s testing: the gateway's EventEmitter is deliberately fail-soft against
+    Kafka being briefly unavailable (see docs/DESIGN.md), but this consumer's
+    connection had no equivalent protection — it crashed outright if Kafka
+    wasn't ready yet (a real, observed startup-ordering race in Kubernetes,
+    where this pod can start before Kafka/Zookeeper are ready), relying on
+    Kubernetes' CrashLoopBackOff to eventually retry it. That "worked" but is
+    noisy and slower than necessary — this waits in-process instead.
+    """
+    for attempt in range(1, max_attempts + 1):
+        try:
+            await consumer.start()
+            return
+        except Exception as exc:  # noqa: BLE001 - any connection failure should retry, not crash
+            if attempt == max_attempts:
+                logger.error("Giving up connecting to Kafka after %d attempts", max_attempts)
+                raise
+            delay = min(base_delay * attempt, max_delay)
+            logger.warning(
+                "Kafka not ready yet (attempt %d/%d): %s — retrying in %.1fs",
+                attempt, max_attempts, exc, delay,
+            )
+            await asyncio.sleep(delay)
+
+
 async def run() -> None:
     bootstrap = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
     metrics_port = int(os.environ.get("CONSUMER_METRICS_PORT", "9100"))
@@ -40,7 +69,7 @@ async def run() -> None:
         value_deserializer=lambda v: json.loads(v.decode("utf-8")),
         group_id="infermesh-metrics-aggregator",
     )
-    await consumer.start()
+    await wait_for_kafka_and_start(consumer)
     logger.info("Consumer connected to Kafka at %s", bootstrap)
     try:
         async for msg in consumer:
