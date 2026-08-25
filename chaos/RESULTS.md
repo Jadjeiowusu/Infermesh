@@ -79,10 +79,58 @@ actual Kubernetes pod churn, not just the mock backend. `readinessProbe`
 routing only to Ready pods — is what made this work, with zero extra
 logic needed in the application itself.
 
-**Not yet tested:** whether the PodDisruptionBudget (`minAvailable: 1`)
-actually blocks a *voluntary* eviction (e.g. `kubectl drain`) — this test
-used `kubectl delete pod` directly, which always succeeds regardless of
-the PDB (PDBs only guard voluntary evictions, not direct deletion). See
-`k8s/DEPLOY.md`'s `kubectl drain --dry-run=server` step for that separate
-check, not yet run.
+**Not yet tested at time of writing:** whether the PodDisruptionBudget
+actually blocks a *voluntary* eviction — see Test 3 below, where this got
+tested for real.
+
+## Test 3: PodDisruptionBudget enforcement (`kubectl drain`)
+
+**Setup:** same cluster as Test 2, 2 gateway replicas, PDB
+`minAvailable: 1`.
+
+**First attempt — dry-run (misleading result, worth documenting why):**
+```
+kubectl drain minikube --ignore-daemonsets --delete-emptydir-data --force --dry-run=server
+```
+This reported **both** gateway pods as evictable, with no PDB objection.
+That result is **wrong**, not a sign the PDB doesn't work — `--dry-run`
+evictions don't mutate cluster state, so each pod's eviction check is
+evaluated independently against the *same* unchanged "2 healthy" baseline.
+A dry-run drain can't see the effect of its own prior (simulated)
+evictions within the same run, so it can't actually reveal whether a PDB
+would block the *second* of two evictions against the same budget. Worth
+knowing this limitation exists before trusting a dry-run drain as proof
+of anything sequential.
+
+**Real test (no `--dry-run`):**
+```
+kubectl drain minikube --ignore-daemonsets --delete-emptydir-data --force
+```
+**Observed:** the first gateway pod evicted normally. The second was
+rejected repeatedly:
+```
+error when evicting pods/"infermesh-gateway-...-4fmvw" -n "default" (will retry after 5s): Cannot evict pod as it would violate the pod's disruption budget.
+```
+It kept retrying every 5s indefinitely (correct — minikube is
+single-node, cordoned during a drain, so there's genuinely nowhere for a
+replacement to schedule and no way capacity recovers mid-drain). Manually
+interrupted, then `kubectl uncordon minikube` restored the node; the
+stack (gateway, Kafka, Zookeeper, consumer) rescheduled and recovered.
+
+**Conclusion:** the PDB is real, not decorative — confirmed with the
+actual expected Kubernetes eviction-API error message, not inferred.
+`kubectl get pdb`'s live `ALLOWED DISRUPTIONS: 1` column (computed
+continuously by the disruption controller) also independently corroborated
+this before the drain test even ran.
+
+**Side effect discovered during this test:** draining fully recreated
+Kafka and Zookeeper (both single-replica, no persistent storage — a
+known, documented gap). The consumer pod that came up afterward
+crash-looped 3 times before stabilizing — traced to the fact that the
+Kafka-connection retry fix (`wait_for_kafka_and_start()`, see below) had
+been built but not yet actually applied/committed at that point in the
+session; a rebuild after properly applying and pushing the fix resolved
+it (confirmed via a clean, zero-restart pod on redeploy — see
+`docs/ROADMAP.md` Phase 3 entry for the full account, including the
+process mistake that caused the delay).
 

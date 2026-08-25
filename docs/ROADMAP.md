@@ -61,17 +61,32 @@
       (`CrashLoopBackOff`) because its Kafka connection had no retry
       logic, unlike the gateway's deliberately fail-soft `EventEmitter`
       from Phase 0. Fixed with `wait_for_kafka_and_start()` (retry with
-      backoff), tested in `tests/test_kafka_consumer_retry.py` — this fix
-      has not yet been rebuilt/redeployed to the live cluster, so the
-      *fix* itself is unverified live even though the *problem* was.
+      backoff), tested in `tests/test_kafka_consumer_retry.py`. This fix
+      took two attempts to actually land: the first rebuild was assumed
+      to include it but didn't — the fix had been packaged and presented
+      but never actually unzipped/committed into the working repo before
+      the rebuild ran, so the old code got rebuilt unchanged. A real
+      crash traceback (`kubectl logs --previous`) caught this directly —
+      `line 43, in run: await consumer.start()` was unmistakably the old
+      code, not the new retry wrapper — rather than the mistake going
+      unnoticed. Re-applied, committed, pushed, and rebuilt properly the
+      second time; confirmed via a clean zero-restart pod on redeploy
+      (different ReplicaSet hash, confirming a genuinely new image).
+      The PDB question is also resolved: `kubectl drain --dry-run=server`
+      gave a misleading "would succeed" result for both gateway pods (a
+      real limitation — dry-run evictions don't mutate state, so
+      sequential PDB enforcement across multiple pods in the same run
+      can't be observed that way). A real (non-dry-run) drain gave the
+      true answer: the first gateway pod evicted normally, the second was
+      correctly and repeatedly rejected with Kubernetes' actual eviction
+      error — *"Cannot evict pod as it would violate the pod's disruption
+      budget."* Full account in `chaos/RESULTS.md` Test 3.
       Known gaps, tracked rather than hidden: no Prometheus/Grafana
       in-cluster (stays in `docker compose` from Phase 2), HPA still
       scales on CPU not the custom `infermesh_replica_in_flight` metric
       exposed since Phase 2, Kafka/Zookeeper are single-replica/no
-      persistent storage (demo-scoped only), and the PDB's actual
-      enforcement (`kubectl drain --dry-run=server`) hasn't been checked
-      yet — `kill_k8s_pod.sh` uses direct pod deletion, which PDBs don't
-      govern.
+      persistent storage (demo-scoped only, and confirmed disruptive to
+      the consumer on recreation, per the retry-fix story above).
 - [ ] **Phase 4** — Independent Kafka consumers. The event pipeline itself
       (gateway emits per-request events, one consumer aggregates them into
       metrics) already exists since Phase 0 and is now visualized in
