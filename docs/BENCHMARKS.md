@@ -88,3 +88,51 @@ or a Locust load shape with little-to-no `wait_time` between requests
 (a burst/hammer pattern), so actual concurrency crosses 20. Worth doing
 as a explicit follow-up rather than assuming linear scaling continues
 past the point this data actually covers.
+
+## Phase 5 follow-up: burst test, backpressure path (real, proven)
+
+Added a second Locust user class, `BurstUser` (`wait_time = constant(0)`
+— no pause between requests), specifically to push actual concurrency
+above the 20-request cap. 30 simulated users, 20s run, `docker compose`
+on WSL2, mock backend.
+
+**A real bug in the test itself, caught before trusting its first
+result:** the original locustfile marked every 503 as `resp.success()`
+(correct — a 503 under overload is the router behaving as designed, not
+a load-test failure) but did nothing else to distinguish it from a 200.
+The first burst run showed **0 failures** and a suspicious bimodal
+latency split (median 11ms, P90 jumping to 170ms) — the tell that many
+requests were being fast-rejected while the "0 failures" number silently
+hid it. Fixed by firing a separately-named Locust event
+(`/v1/completions [503 backpressure]`) whenever a 503 occurs, so it shows
+up as its own row in the stats table instead of being folded into the
+200 count.
+
+**Real result after the fix:**
+
+| Outcome | Count | % of total |
+|---|---|---|
+| 200 (succeeded) | 14,206 | 54.95% |
+| 503 (backpressure, correctly rejected) | 11,646 | 45.05% |
+| **Total attempted** | **25,852** | |
+
+Combined attempted throughput at steady state: ~1,305 req/s (717 req/s
+succeeding, 588 req/s correctly rejected) from just 30 concurrent
+no-wait clients — confirming the router's overload protection is real
+and gets exercised heavily under this load shape, not merely defined in
+code and never hit.
+
+**Honest caveat on the latency numbers specifically (not the counts):**
+Locust itself printed `CPU usage above 90%!` during this run, warning
+that response-time measurements may be unreliable once the load
+generator itself is CPU-saturated — plausible here, since 30 users
+firing continuously with zero wait time on the same WSL2 machine running
+the whole stack is a demanding client-side load, not just a server-side
+one. The pass/reject **counts** are a real per-request server outcome
+and stand regardless; the specific latency percentiles from this run
+(e.g. successful requests showing an implausibly low median of ~11ms,
+when the mock backend simulates ~120-180ms) are not trusted as precise
+and are not reported as a clean before/after latency number here. A
+properly isolated version of this test — separate machine for the load
+generator, or Locust's own distributed-load mode — is the honest next
+step before quoting exact burst-mode latencies.
