@@ -44,21 +44,47 @@ load-test entries.
 | Single-request round trip | ~130–180ms | mock backend, 1 client, local |
 | Gateway overhead over raw backend call | not yet isolated | TODO Phase 5 |
 
-## Phase 5 (planned entries)
+## Phase 5: mock backend concurrency sweep (real, `loadtest/locustfile.py`)
 
-- [ ] Baseline: 1 replica, mock backend, 1/10/50/100 concurrent users
-      (throughput, P50/P95/P99 latency)
-- [ ] Real model baseline: 1 replica, llama.cpp or vLLM, same concurrency
-      sweep
-- [ ] Optimization: continuous batching on vs off (vLLM) — throughput gain,
-      eval-score delta
-- [ ] Optimization: INT8/AWQ quantization vs FP16 — throughput gain,
-      latency change, eval-score delta (this is the entry that matters most
-      to a hiring manager: does faster mean worse, and by how much)
-- [ ] Optimization: prefix/KV-cache reuse on repeated-prefix prompts —
-      throughput gain specifically on that workload shape
-- [ ] Scaling: 1 replica vs 2 vs 4 — throughput and tail latency under
-      fixed load, plus whether HPA reacted in time
+2 gateway replicas, mock backend, `docker compose` on WSL2. 30s per run,
+`--spawn-rate` scaled with `--users` (1/1, 10/5, 50/10, 100/20).
 
-Nothing below this line is real yet — fill in as Phase 5 work lands, and
-do not backfill fabricated numbers.
+| Simulated users | POST /v1/completions RPS | Median | P95 | P99 | Failures |
+|---|---|---|---|---|---|
+| 1 | 0.84 | 150ms | 190ms | 210ms | 0/25 |
+| 10 | 6.10 | 160ms | 190ms | 190ms | 0/217 |
+| 50 | 34.49 | 160ms | 190ms | 200ms | 0/1025 |
+| 100 | 68.74 | 160ms | 190ms | 190ms | 0/2050 |
+
+**Throughput scales linearly with simulated users across this range, and
+latency stays flat** (median pinned at ~150-160ms, P95 at ~190ms,
+regardless of load) — the mock backend's own simulated latency
+(`base_latency_ms=120` + up to 60ms jitter, from `serving/backend.py`)
+dominates end-to-end time at every concurrency level tested. Zero request
+failures throughout, at every level.
+
+**The honest finding, not just the headline number:** the router's
+backpressure cap (`max_in_flight_per_replica=10` × 2 replicas = 20
+concurrent requests before a 503) was **never actually triggered**, even
+at 100 simulated users. Why: Locust's default `wait_time` (0.2-1.0s
+between requests per simulated user, set in `loadtest/locustfile.py`)
+means each "user" spends most of its time idle between requests, not
+holding a request open. By Little's Law (concurrency ≈ throughput ×
+average service time), actual concurrent in-flight requests at 100
+simulated users was only ~10.5 — comfortably under the 20-request cap:
+
+| Simulated users | Measured RPS | Actual concurrent in-flight (Little's Law) |
+|---|---|---|
+| 1 | 0.84 | ~0.1 |
+| 10 | 6.10 | ~1.0 |
+| 50 | 34.49 | ~5.2 |
+| 100 | 68.74 | ~10.5 |
+
+So this run proves the gateway scales cleanly and linearly under this
+particular load shape — a real, useful result — but does **not** prove
+anything about the backpressure/503 path, which remains genuinely
+untested. Confirming that needs either a much higher simulated-user count
+or a Locust load shape with little-to-no `wait_time` between requests
+(a burst/hammer pattern), so actual concurrency crosses 20. Worth doing
+as a explicit follow-up rather than assuming linear scaling continues
+past the point this data actually covers.
