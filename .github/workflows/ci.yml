@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Unit tests
+        run: PYTHONPATH=. pytest tests/ -v
+
+  docker-build:
+    runs-on: ubuntu-latest
+    needs: lint-and-test
+    strategy:
+      matrix:
+        target: [gateway, consumer, archiver, streamlit]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build ${{ matrix.target }} image
+        run: docker build -f docker/Dockerfile.${{ matrix.target }} -t infermesh-${{ matrix.target }}:ci .
+
+  helm-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+
+      - name: Lint Helm chart
+        run: helm lint k8s/helm/infermesh
+
+  eval-harness-smoke-test:
+    runs-on: ubuntu-latest
+    needs: lint-and-test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements-dev.txt
+          pip install -r eval/requirements.txt
+
+      - name: Start gateway (mock backend)
+        run: |
+          MODEL_BACKEND=mock N_MOCK_REPLICAS=2 PYTHONPATH=. \
+            python -m uvicorn gateway.app.main:app --port 8000 &
+          for i in $(seq 1 15); do
+            curl -sf http://localhost:8000/health && break
+            sleep 1
+          done
+
+      # This is NOT a quality gate — the mock backend's canned responses
+      # are expected to fail every must_contain check by design (they're
+      # not real answers). This step exists to prove the harness itself
+      # runs correctly end-to-end against a live gateway and produces a
+      # report, not that the mock backend passes an eval it was never
+      # meant to pass. See eval/harness.py and docs/ROADMAP.md Phase 6.
+      - name: Run eval harness against mock backend (smoke test only)
+        run: |
+          PYTHONPATH=. python eval/harness.py \
+            --gateway-url http://localhost:8000 \
+            --suite eval/prompts/basic_suite.yaml \
+            --output eval/results/ci_smoke_test.json
+          echo "Harness ran successfully — see eval/results/ci_smoke_test.json for the report."
+          echo "Note: mock backend is expected to fail every must_contain check; that is correct, not a CI failure."

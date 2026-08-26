@@ -155,9 +155,35 @@
       actual GPU/CPU throughput numbers a hiring manager would care about
       most; the quantization/continuous-batching optimization entries
       from the original Phase 5 plan are also still open.
-- [ ] **Phase 6** — Eval harness wired into CI, chaos scripts + observed
-      behavior writeup, SLO doc, polished Streamlit control room with
-      A/B compare and chaos button, demo GIF in README.
+- [ ] **Phase 6 (eval harness done, rest still open)** — `eval/harness.py`
+      built: pure, network-free scoring logic (`check_must_contain`)
+      separated from the async HTTP runner, matching the pattern used
+      throughout this project (e.g. `archiver.py`'s `append_event`).
+      Added a new eval case, `pagedattention_explanation`, directly tied
+      to the real bug found in Phase 1 — a live Qwen2.5-3B-Instruct-AWQ
+      run described PagedAttention as access control instead of KV-cache
+      memory management — so that exact regression is now caught
+      automatically instead of by accident. Unit-tested
+      (`tests/test_eval_harness.py`) and run live end-to-end against a
+      real gateway in this environment: correctly failed the
+      deterministic checks against the mock backend's canned text (as
+      expected — mock was never meant to pass), correctly passed the
+      rubric-only cases (which have no deterministic check and always
+      pass, pending human/judge review). Wired into CI
+      (`.github/workflows/ci.yml`, new `eval-harness-smoke-test` job) —
+      explicitly not a quality gate: the job proves the harness runs
+      end-to-end, not that mock passes an eval it can't pass. Also fixed
+      a real, unrelated CI gap while in there: `docker-build`'s matrix
+      was missing `archiver` (added in Phase 4) — that Dockerfile had
+      never once been built in CI.
+      **Not implemented**: LLM-as-judge scoring (the `rubric` field on
+      every case). Every case has one, but scoring it needs an
+      independent judge model — grading a model's output with the same
+      model is a real methodological weakness worth naming rather than
+      building around quietly. Tracked here, not hidden.
+      **Still open in Phase 6**: chaos scripts + observed-behavior
+      writeup polish, an SLO doc pass, and Streamlit control room polish
+      (A/B compare panel, demo GIF for the README).
 
 Each phase should land as its own PR with a clean diff — that PR history is
 itself part of the portfolio.

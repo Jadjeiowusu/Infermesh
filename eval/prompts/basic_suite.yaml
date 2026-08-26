@@ -29,3 +29,15 @@
   prompt: "Summarize the point of a load balancer in one sentence."
   must_contain: []
   rubric: "Summary is accurate, one sentence, no filler."
+
+- id: pagedattention_explanation
+  prompt: "Explain PagedAttention in one sentence."
+  must_contain: ["cache"]
+  rubric: >
+    Answer correctly describes PagedAttention as a memory-management
+    technique for the KV cache (paged/virtual-memory-style allocation),
+    not an access-control or security mechanism. This case exists
+    specifically because a real Qwen2.5-3B-Instruct-AWQ run in this
+    project (Phase 1, docs/BENCHMARKS.md) incorrectly described
+    PagedAttention as "access control" — the harness is meant to catch
+    that exact regression automatically instead of by accident.
