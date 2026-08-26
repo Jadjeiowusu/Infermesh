@@ -155,7 +155,7 @@
       actual GPU/CPU throughput numbers a hiring manager would care about
       most; the quantization/continuous-batching optimization entries
       from the original Phase 5 plan are also still open.
-- [ ] **Phase 6 (eval harness done, rest still open)** — `eval/harness.py`
+- [ ] **Phase 6 (nearly done — only the demo GIF left)** — `eval/harness.py`
       built: pure, network-free scoring logic (`check_must_contain`)
       separated from the async HTTP runner, matching the pattern used
       throughout this project (e.g. `archiver.py`'s `append_event`).
@@ -175,15 +175,39 @@
       end-to-end, not that mock passes an eval it can't pass. Also fixed
       a real, unrelated CI gap while in there: `docker-build`'s matrix
       was missing `archiver` (added in Phase 4) — that Dockerfile had
-      never once been built in CI.
+      never once been built in CI. And a bigger discovery: `.github/`
+      itself had never actually reached GitHub since Phase 0 — the `cp
+      -r .../* dest/` pattern used throughout this whole project to
+      apply deltas silently skips dotfiles/dot-directories (a bash glob
+      behavior, not a bug in any one script), so CI had never once run
+      until this fix. First real CI run passed all 4 jobs.
       **Not implemented**: LLM-as-judge scoring (the `rubric` field on
       every case). Every case has one, but scoring it needs an
       independent judge model — grading a model's output with the same
       model is a real methodological weakness worth naming rather than
       building around quietly. Tracked here, not hidden.
-      **Still open in Phase 6**: chaos scripts + observed-behavior
-      writeup polish, an SLO doc pass, and Streamlit control room polish
-      (A/B compare panel, demo GIF for the README).
+      **SLO doc** (`docs/SLO.md`) filled in with real numbers from every
+      phase that had them, replacing "not yet measured" placeholders —
+      including an honest one: the P50-time-to-first-token SLO can't
+      really be measured yet, since the gateway doesn't implement
+      streaming responses (a real, previously-undocumented gap, not
+      papered over with a proxy number pretending to be the same thing).
+      **Chaos results** (`chaos/RESULTS.md`) got a scannable summary
+      table at the top — the three tests and their real results at a
+      glance, full detail preserved below it for anyone who wants it.
+      **Streamlit control room**: added an A/B Compare tab — same
+      prompt to two different gateway URLs side by side (e.g. mock vs.
+      real vLLM), sharing a `call_completion()` helper with the
+      Playground tab instead of duplicating the request/timing logic.
+      Unit-tested (`tests/test_streamlit_helpers.py`, mocked HTTP calls)
+      and actually launched in this environment to confirm it starts
+      clean (`/_stcore/health` responded `ok`, no errors in the log) —
+      not just that the code parses.
+      **Still open**: a demo GIF for the README — this needs a screen
+      recording, which can't be produced in this environment; the person
+      running this repo needs to record one themselves (e.g. with
+      ScreenToGif, Peek, or `asciinema` + a GIF converter for a terminal-
+      only demo) showing the Streamlit control room in action.
 
 Each phase should land as its own PR with a clean diff — that PR history is
 itself part of the portfolio.

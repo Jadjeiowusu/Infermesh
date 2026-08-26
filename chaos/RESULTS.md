@@ -1,5 +1,17 @@
 # Chaos Test Results
 
+## Summary
+
+| # | Test | Claim tested | Result |
+|---|---|---|---|
+| 1 | Kill a mock replica | Router routes around a failing replica with zero visible failures | **Met** — 5/5 requests succeeded, circuit breaker tripped at the configured threshold |
+| 2 | Kill a real k8s pod | Same claim, against real Kubernetes pod churn, not an in-process flag | **Met** — 40/40 requests returned HTTP 200 during an actual pod deletion; replacement pod Ready in ~8s |
+| 3 | `kubectl drain` (PodDisruptionBudget) | PDB actually blocks a voluntary eviction, not just configured to look like it does | **Met** — real Kubernetes eviction error (`Cannot evict pod as it would violate the pod's disruption budget`), confirmed after a misleading dry-run result was correctly diagnosed as a dry-run limitation, not a PDB failure |
+
+Each test's full setup, exact commands, and complete observed output is
+below — the summary above is for quick scanning, not a replacement for
+the detail.
+
 ## Test 1: kill a mock replica (`chaos/kill_mock_replica.sh`)
 
 **Setup:** gateway running with `MODEL_BACKEND=mock`, `N_MOCK_REPLICAS=2`
