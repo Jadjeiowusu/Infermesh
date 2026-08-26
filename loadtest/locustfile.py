@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import random
 
-from locust import HttpUser, between, constant, task
+from locust import HttpUser, between, constant, events, task
 
 PROMPTS = [
     "Explain PagedAttention in one sentence.",
@@ -34,23 +34,46 @@ PROMPTS = [
 ]
 
 
+def do_completion(user: HttpUser) -> None:
+    """
+    Shared by both user classes below. On a 503 (expected once the
+    router's backpressure cap is hit — see serving/backend.py and
+    gateway/app/router.py), marks the response as successful (a 503 here
+    is the system behaving correctly, not a load-test failure) but ALSO
+    fires a separately-named request event, so 503s show up as their own
+    row in Locust's stats table instead of being silently folded into the
+    200 count. An earlier version of this file only did the former —
+    which technically made "# fails" always read 0 whether or not
+    backpressure was actually triggered, hiding the exact thing the test
+    was meant to measure. See docs/BENCHMARKS.md's Phase 5 burst-test
+    entry for the real numbers this was built to catch.
+    """
+    prompt = random.choice(PROMPTS)
+    with user.client.post(
+        "/v1/completions",
+        json={"prompt": prompt, "max_tokens": 128},
+        catch_response=True,
+    ) as resp:
+        if resp.status_code == 503:
+            resp.success()
+            events.request.fire(
+                request_type="POST",
+                name="/v1/completions [503 backpressure]",
+                response_time=resp.elapsed.total_seconds() * 1000,
+                response_length=len(resp.content),
+                exception=None,
+                context={},
+            )
+        elif resp.status_code != 200:
+            resp.failure(f"unexpected status {resp.status_code}")
+
+
 class InferMeshUser(HttpUser):
     wait_time = between(0.2, 1.0)
 
     @task
     def completion(self):
-        prompt = random.choice(PROMPTS)
-        with self.client.post(
-            "/v1/completions",
-            json={"prompt": prompt, "max_tokens": 128},
-            catch_response=True,
-        ) as resp:
-            if resp.status_code == 503:
-                # Expected under overload once backpressure kicks in — a
-                # 503 here is the system behaving correctly, not a bug.
-                resp.success()
-            elif resp.status_code != 200:
-                resp.failure(f"unexpected status {resp.status_code}")
+        do_completion(self)
 
     @task(1)
     def check_status(self):
@@ -72,13 +95,4 @@ class BurstUser(HttpUser):
 
     @task
     def completion(self):
-        prompt = random.choice(PROMPTS)
-        with self.client.post(
-            "/v1/completions",
-            json={"prompt": prompt, "max_tokens": 128},
-            catch_response=True,
-        ) as resp:
-            if resp.status_code == 503:
-                resp.success()
-            elif resp.status_code != 200:
-                resp.failure(f"unexpected status {resp.status_code}")
+        do_completion(self)
