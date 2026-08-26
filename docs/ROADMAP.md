@@ -87,32 +87,46 @@
       exposed since Phase 2, Kafka/Zookeeper are single-replica/no
       persistent storage (demo-scoped only, and confirmed disruptive to
       the consumer on recreation, per the retry-fix story above).
-- [ ] **Phase 4 (built, not yet verified live)** — Second, independent
-      Kafka consumer: `kafka/consumer/archiver.py`, its own consumer
-      group (`infermesh-event-archiver`), writes every event to a durable
-      JSONL log — proof the topic supports genuine pub-sub decoupling,
-      not just "one consumer works." Refactored the Kafka retry-with-backoff
-      fix (`wait_for_kafka_and_start`, from the Phase 3 consumer bug) into
-      a shared `kafka/consumer/retry.py` rather than duplicating it a
-      second time, since the archiver needed the identical protection.
-      Ran the archiver process directly against an unreachable Kafka in
-      this environment and confirmed it logs warnings and retries with
-      backoff instead of crashing — same fix, second consumer, same
-      correct behavior. Unit-tested (`tests/test_archiver.py`,
+- [x] **Phase 4** — Second, independent Kafka consumer:
+      `kafka/consumer/archiver.py`, its own consumer group
+      (`infermesh-event-archiver`), writes every event to a durable JSONL
+      log — proof the topic supports genuine pub-sub decoupling, not just
+      "one consumer works." Refactored the Kafka retry-with-backoff fix
+      (`wait_for_kafka_and_start`, from the Phase 3 consumer bug) into a
+      shared `kafka/consumer/retry.py` rather than duplicating it a second
+      time. Unit-tested (`tests/test_archiver.py`,
       `tests/test_kafka_consumer_retry.py` now imports the shared
-      module). Wired into `docker-compose.yml` (own Prometheus port
-      9101, a named Docker volume so the archive log survives container
-      restarts — unlike Kafka/Zookeeper's demo-scoped ephemeral storage)
-      and into `observability/prometheus/prometheus.yml`'s scrape
-      config. Not marked done because the actual pub-sub claim — both
-      consumers receiving the same events independently, at the same
-      time, against a real broker — hasn't been observed live yet; that
-      needs `docker compose up` and sending real traffic through the
-      gateway while watching both `localhost:9100/metrics` and
-      `localhost:9101/metrics` move together, plus checking
-      `archived_events.jsonl` for the actual event content.
+      module). Wired into `docker-compose.yml` (own Prometheus port 9101,
+      a named Docker volume so the archive log survives container
+      restarts) and into `observability/prometheus/prometheus.yml`'s
+      scrape config.
+      **Verified live**: sent 10 real completion requests through the
+      gateway and confirmed both consumer groups independently counted
+      exactly 10 events each (`infermesh_events_consumed_total` on
+      `:9100` and `infermesh_events_archived_total` on `:9101`) — the
+      actual pub-sub proof, not inferred.
+      Hit and resolved a real environment footgun along the way, worth
+      remembering: `eval $(minikube docker-env)` (used in Phase 3) sets
+      `DOCKER_HOST` etc. for the current shell session and doesn't
+      un-set itself — a terminal that had run it earlier silently pointed
+      `docker compose up` at minikube's *internal* Docker daemon instead
+      of the regular one. Everything looked fine (`docker compose ps`
+      showed all containers healthy) but nothing was reachable on
+      `localhost`, since the "published" ports lived inside minikube's
+      own network. Diagnosed via `env | grep -i docker` /
+      `echo $MINIKUBE_ACTIVE_DOCKERD`, fixed with `unset DOCKER_TLS_VERIFY
+      DOCKER_HOST DOCKER_CERT_PATH MINIKUBE_ACTIVE_DOCKERD`. Worth
+      checking `env | grep -i docker` first any time `docker compose ps`
+      and `curl localhost:<port>` disagree about whether something is
+      actually running.
       Known gap: not yet added to the Kubernetes Helm chart (Phase 3) —
       docker-compose only for now, noted rather than silently skipped.
+      Archive-file content inspection (`cat archived_events.jsonl`) was
+      not completed — a separate, still-unexplained terminal issue kept
+      reporting the container as not running even while its metrics
+      endpoint responded correctly. Not chased further since the core
+      pub-sub claim was already conclusively proven by the matched
+      counters; worth revisiting if it recurs.
 - [ ] **Phase 5** — Load testing (Locust) + optimization loop, written up in
       `docs/BENCHMARKS.md` with before/after numbers per change.
 - [ ] **Phase 6** — Eval harness wired into CI, chaos scripts + observed
