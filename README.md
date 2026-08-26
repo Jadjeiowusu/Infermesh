@@ -6,30 +6,22 @@ pipeline, Kubernetes deployment with autoscaling and chaos-tested reliability,
 a load/eval harness, and a Streamlit control room for live demoing.
 
 InferMesh is the *serving infrastructure* layer that a system like
-[InfraAgent-911](#) would sit on top of — this repo focuses purely on making
+[InfraAgent-911](#) would sit on top of; this repo focuses purely on making
 LLM inference fast, observable, and resilient at scale, independent of any
 single application.
 
 ## Demo
-
-<!--
-  TODO: record and embed a short GIF here showing the Streamlit control
-  room in action — a completion in the Playground tab, an A/B comparison
-  (e.g. mock vs. real vLLM), and the Chaos tab killing a replica and
-  watching the router recover. Suggested tools: ScreenToGif (Windows),
-  Peek (Linux/WSL2). Save as docs/demo.gif and reference it below:
-
-  ![InferMesh control room demo](docs/demo.gif)
--->
+![InferMesh control room demo](docs/demo.gif)
 
 ## Why this exists
 
 Most "LLM project" portfolios are a notebook that calls an API. InferMesh is
 the opposite: the model is the least interesting part. What's being tested
-here is everything *around* the model — routing, backpressure, autoscaling,
+here is everything *around* the model: routing, backpressure, autoscaling,
 graceful degradation, and measurable optimization tradeoffs.
 
-## Architecture┌─────────────────┐
+## Architecture
+                    ┌─────────────────┐
                     │   Streamlit     │
                     │  Control Room   │
                     └────────┬────────┘
@@ -53,7 +45,9 @@ graceful degradation, and measurable optimization tradeoffs.
                     └────────┬────────┘
                     ┌────────▼────────┐
                     │ Metrics Consumer │──▶ Prometheus ──▶ Grafana
-                    └─────────────────┘Full diagram source: [`docs/diagrams/architecture.md`](docs/diagrams/architecture.md).
+                    └─────────────────┘
+
+Full diagram source: [`docs/diagrams/architecture.md`](docs/diagrams/architecture.md).
 Design rationale and tradeoffs: [`docs/DESIGN.md`](docs/DESIGN.md).
 
 ## Repo layout
