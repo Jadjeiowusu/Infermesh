@@ -93,11 +93,11 @@ curl -X POST http://localhost:8000/v1/completions \
 Same response shape as every other phase — `backend`, `replica_id`,
 `latency_ms` — just now served from a pod instead of a bare process.
 
-## 5. Run the real chaos test
+## 5. Run the chaos test
 
-This is the actual point of Phase 3 — the same reliability claim from
-Phase 0's mock-backend chaos test (`chaos/RESULTS.md`), now tested
-against a real Kubernetes Deployment instead of an in-process health flag:
+The same reliability claim from Phase 0's mock-backend chaos test, now
+against a real Kubernetes Deployment instead of an in-process health
+flag:
 
 ```bash
 ./chaos/kill_k8s_pod.sh default infermesh
@@ -105,21 +105,34 @@ against a real Kubernetes Deployment instead of an in-process health flag:
 
 While that's running, hit the gateway repeatedly from a third terminal
 (via the port-forward from step 4) and watch whether any request fails
-during the kill/replace window. Record what you observe in
-`chaos/RESULTS.md`'s "Test 2" section (currently marked "not yet run" —
-this is where that gets filled in with a real result).
+during the kill/replace window. Full results, including the exact
+commands used and the request-loop output, are in `chaos/RESULTS.md`
+Test 2: 40/40 requests returned HTTP 200 during an actual pod deletion,
+with the replacement pod reaching Ready in ~8 seconds.
 
 ## 6. Confirm the PodDisruptionBudget is real, not decorative
 
 ```bash
 kubectl get pdb
-kubectl drain <node-name> --ignore-daemonsets --dry-run=server
 ```
 
-The dry-run drain should respect `minAvailable: 1` on the gateway PDB —
-worth checking once, since a PDB that's silently misconfigured (wrong
-label selector, wrong minAvailable) is a common way this kind of setup
-looks correct without actually protecting anything.
+Note the `ALLOWED DISRUPTIONS` column — the disruption controller
+computes it live from current replica count and `minAvailable`.
+
+A dry-run drain is not a reliable way to test this — it doesn't mutate
+cluster state between simulated evictions, so it can report both
+replicas of a 2-pod Deployment as evictable even when a real drain would
+correctly reject the second one. Use a real drain instead:
+
+```bash
+kubectl drain <node-name> --ignore-daemonsets --delete-emptydir-data --force
+```
+
+On a single-node cluster this evicts everything on the node, including
+both gateway pods — the first evicts normally, the second is rejected
+with the PDB's actual eviction-API error
+(`chaos/RESULTS.md` Test 3 has the full output). Run
+`kubectl uncordon <node-name>` afterward to let everything reschedule.
 
 ## Canary rollout
 
@@ -149,17 +162,14 @@ what this does.
   metric — see the comment in `values.yaml` under `gateway.autoscaling`
 - Kafka/Zookeeper are single-replica, no persistent storage — fine for a
   demo, not how you'd run them for real
-- ~~No `initContainer` enforcing startup order~~ — **confirmed and fixed**
-  during real testing: the consumer pod crash-looped 4 times on first
-  deploy before Kafka became ready (`CrashLoopBackOff`), because
-  `kafka/consumer/aggregator.py`'s Kafka connection had no retry logic —
-  unlike the gateway's `EventEmitter`, which was deliberately fail-soft
-  from Phase 0. Added `wait_for_kafka_and_start()` (retry with backoff,
-  tested in `tests/test_kafka_consumer_retry.py`) so the consumer waits
-  in-process instead of relying on Kubernetes to restart it repeatedly.
-  The gateway itself needed no such fix — it was already fine, since a
-  request simply gets served without an emitted event if Kafka isn't up
-  yet, exactly as designed.
+- The consumer's Kafka connection retries with backoff
+  (`wait_for_kafka_and_start()`, tested in
+  `tests/test_kafka_consumer_retry.py`) rather than crashing if Kafka
+  isn't ready yet at pod startup — a real startup-ordering race on first
+  deploy caused `CrashLoopBackOff` before this was in place. The
+  gateway's `EventEmitter` needed no equivalent fix: it's fail-soft by
+  design, so a request is served without an emitted event if Kafka isn't
+  up yet.
 
 ## Tearing down
 

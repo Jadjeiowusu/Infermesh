@@ -33,16 +33,14 @@ pipeline bug; it's a real illustration of why the eval harness
 (`eval/prompts/basic_suite.yaml`, Phase 6) needs to exist rather than
 trusting that a running server means correct answers.
 
-## Phase 0 baseline (mock backend, informal, not load-tested)
+## Phase 0 baseline (mock backend, informal)
 
-Sanity numbers from manual testing, not a real benchmark run — recorded
-here as a placeholder so the format is established before Phase 5's actual
-load-test entries.
+Manual sanity-check numbers, not a load test — see Phase 5 below for the
+real concurrency sweep.
 
 | Metric | Value | Conditions |
 |---|---|---|
 | Single-request round trip | ~130–180ms | mock backend, 1 client, local |
-| Gateway overhead over raw backend call | not yet isolated | TODO Phase 5 |
 
 ## Phase 5: mock backend concurrency sweep (real, `loadtest/locustfile.py`)
 

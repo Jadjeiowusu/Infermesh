@@ -91,9 +91,9 @@ actual Kubernetes pod churn, not just the mock backend. `readinessProbe`
 routing only to Ready pods — is what made this work, with zero extra
 logic needed in the application itself.
 
-**Not yet tested at time of writing:** whether the PodDisruptionBudget
-actually blocks a *voluntary* eviction — see Test 3 below, where this got
-tested for real.
+**PodDisruptionBudget enforcement is tested separately in Test 3
+below** — killing a pod directly (as this test does) bypasses the PDB
+entirely, since PDBs only govern voluntary evictions.
 
 ## Test 3: PodDisruptionBudget enforcement (`kubectl drain`)
 
@@ -135,14 +135,12 @@ actual expected Kubernetes eviction-API error message, not inferred.
 continuously by the disruption controller) also independently corroborated
 this before the drain test even ran.
 
-**Side effect discovered during this test:** draining fully recreated
-Kafka and Zookeeper (both single-replica, no persistent storage — a
-known, documented gap). The consumer pod that came up afterward
-crash-looped 3 times before stabilizing — traced to the fact that the
-Kafka-connection retry fix (`wait_for_kafka_and_start()`, see below) had
-been built but not yet actually applied/committed at that point in the
-session; a rebuild after properly applying and pushing the fix resolved
-it (confirmed via a clean, zero-restart pod on redeploy — see
-`docs/ROADMAP.md` Phase 3 entry for the full account, including the
-process mistake that caused the delay).
+**Side effect of this test:** draining fully recreated Kafka and
+Zookeeper (both single-replica, no persistent storage — a known,
+documented gap). The consumer pod that came up afterward crash-looped 3
+times before stabilizing, because its Kafka connection had no retry
+logic at that point. Fixed with `wait_for_kafka_and_start()` (retry with
+backoff — see Phase 3 in `docs/ROADMAP.md` and
+`tests/test_kafka_consumer_retry.py`); confirmed clean via a zero-restart
+pod on redeploy.
 

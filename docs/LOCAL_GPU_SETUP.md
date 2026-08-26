@@ -135,14 +135,13 @@ reflect real inference time — this is the first real number to record in
 
 ## Why 3B instead of the 8B model from the original design
 
-The Phase 0 design assumed an 8B-class model as the default. At 8GB of
+The original design assumed an 8B-class model as the default. At 8GB of
 VRAM on a laptop GPU also driving the display, even the AWQ-quantized 8B
 model is too tight once KV-cache overhead is accounted for — 3B is the
-realistic fit. This is worth stating plainly in an interview rather than
-hidden: model size is a real infrastructure constraint, not a detail, and
-picking the right size for the hardware you actually have is itself an
-engineering decision. `docs/BENCHMARKS.md` should record both the model
-choice and the reasoning, not just the numbers.
+realistic fit. Model size is a real infrastructure constraint, not a
+detail: picking the right size for the available hardware is itself an
+engineering decision, and `docs/BENCHMARKS.md` records both the choice
+and the reasoning alongside the numbers.
 
 ## Constraints of this setup
 

@@ -1,213 +1,191 @@
 # Roadmap
 
-- [x] **Phase 0** — Repo scaffold, CI, architecture doc, running skeleton
-      (mock backend, gateway, Streamlit playground, docker-compose).
-- [x] **Phase 1** — Real vLLM backend verified working end to end: gateway
-      → router → vLLM → GPU, confirmed via `backend: "vllm"` in the
-      response (see `docs/BENCHMARKS.md` for the first real latency
-      number). Ran on an RTX 4070 Laptop GPU (8GB) via WSL2, after
-      diagnosing and working around two real WSL2/vLLM bugs — documented
-      in `docs/LOCAL_GPU_SETUP.md` rather than left as tribal knowledge:
-      - `RuntimeError: UVA is not available` — confirmed upstream bug
-        ([vllm-project/vllm#47387](https://github.com/vllm-project/vllm/issues/47387)),
-        worked around with `VLLM_WSL2_ENABLE_PIN_MEMORY=1` + `--enforce-eager`
-      - `Could not find nvcc` — WSL2 only provides the NVIDIA driver, not
-        the CUDA toolkit; installed separately
-      llama.cpp (CPU, no GPU needed) also wired up for the Ubuntu laptop —
-      see `docs/LOCAL_CPU_SETUP.md` — not yet run for real, but same
-      adapter pattern as vLLM. HPC path kept as a secondary option in
-      `docs/HPC_SETUP.md` (access there is partial and doesn't allow
-      installing software). Still open: re-measuring without
-      `--enforce-eager` once the upstream bug allows it, streaming
-      responses, and re-running the Phase 0 chaos test against two real
-      replicas instead of one (works for either backend once a second
-      instance exists).
-- [x] **Phase 2** — Prometheus metrics from the gateway: latency
-      histogram (P50/P95/P99 via `histogram_quantile`), request counters
-      by status/replica/backend, token throughput counters, and
-      live per-replica gauges (in-flight requests, circuit breaker state,
-      consecutive failures) via a custom collector
-      (`gateway/app/main.py: RouterStateCollector`) that reads
-      `router.status()` at scrape time — no Gauge-syncing code needed in
-      the request path. Grafana dashboard (`observability/grafana-
-      dashboards/infermesh-overview.json`) auto-provisions on `docker
-      compose up` via `observability/grafana-provisioning/`. Covered by
-      real tests (`tests/test_metrics.py`) that hit `/v1/completions` and
-      assert the metrics actually move, not just that they're declared.
-      Known gap: the `status="error"` path can't yet identify which
-      replica failed (see `observability/grafana-dashboards/README.md`).
-- [x] **Phase 3** — Deployed to a real minikube cluster and verified live,
-      not just built: 2 gateway pods + consumer + Kafka/Zookeeper all
-      reached `Running`, a request through `kubectl port-forward` returned
-      a real response from an in-cluster pod, and the actual chaos test
-      (`chaos/kill_k8s_pod.sh`, built in Phase 0, unused until now) killed
-      a live gateway pod while **40/40 concurrent requests kept returning
-      HTTP 200** — a stronger, more directly measured result than Phase
-      0's mock-backend version. Replacement pod reached Ready in ~8s. Full
-      results in `chaos/RESULTS.md` Test 2; `docs/SLO.md` updated with the
-      real numbers.
-      Helm chart work: fixed a real gap (`imagePullPolicy` was unset,
-      which would have caused `ImagePullBackOff` on locally-built minikube
-      images since `latest` defaults to `Always`), added Kafka/Zookeeper
-      deployments (previously docker-compose-only — the chart had nothing
-      for the gateway to talk to), a Service for the consumer, an explicit
-      zero-downtime rolling-update strategy, and a basic label-based
-      canary deployment (`gateway.canary.enabled`, off by default —
-      traffic split by pod count, not exact percentage; a real
-      weighted/progressive rollout needs Argo Rollouts or Flagger, out of
-      scope here).
-      A second real gap was found *during* this live test, not just
-      predicted: the consumer pod crash-looped 4 times on first deploy
-      (`CrashLoopBackOff`) because its Kafka connection had no retry
-      logic, unlike the gateway's deliberately fail-soft `EventEmitter`
-      from Phase 0. Fixed with `wait_for_kafka_and_start()` (retry with
-      backoff), tested in `tests/test_kafka_consumer_retry.py`. This fix
-      took two attempts to actually land: the first rebuild was assumed
-      to include it but didn't — the fix had been packaged and presented
-      but never actually unzipped/committed into the working repo before
-      the rebuild ran, so the old code got rebuilt unchanged. A real
-      crash traceback (`kubectl logs --previous`) caught this directly —
-      `line 43, in run: await consumer.start()` was unmistakably the old
-      code, not the new retry wrapper — rather than the mistake going
-      unnoticed. Re-applied, committed, pushed, and rebuilt properly the
-      second time; confirmed via a clean zero-restart pod on redeploy
-      (different ReplicaSet hash, confirming a genuinely new image).
-      The PDB question is also resolved: `kubectl drain --dry-run=server`
-      gave a misleading "would succeed" result for both gateway pods (a
-      real limitation — dry-run evictions don't mutate state, so
-      sequential PDB enforcement across multiple pods in the same run
-      can't be observed that way). A real (non-dry-run) drain gave the
-      true answer: the first gateway pod evicted normally, the second was
-      correctly and repeatedly rejected with Kubernetes' actual eviction
-      error — *"Cannot evict pod as it would violate the pod's disruption
-      budget."* Full account in `chaos/RESULTS.md` Test 3.
-      Known gaps, tracked rather than hidden: no Prometheus/Grafana
-      in-cluster (stays in `docker compose` from Phase 2), HPA still
-      scales on CPU not the custom `infermesh_replica_in_flight` metric
-      exposed since Phase 2, Kafka/Zookeeper are single-replica/no
-      persistent storage (demo-scoped only, and confirmed disruptive to
-      the consumer on recreation, per the retry-fix story above).
-- [x] **Phase 4** — Second, independent Kafka consumer:
-      `kafka/consumer/archiver.py`, its own consumer group
-      (`infermesh-event-archiver`), writes every event to a durable JSONL
-      log — proof the topic supports genuine pub-sub decoupling, not just
-      "one consumer works." Refactored the Kafka retry-with-backoff fix
-      (`wait_for_kafka_and_start`, from the Phase 3 consumer bug) into a
-      shared `kafka/consumer/retry.py` rather than duplicating it a second
-      time. Unit-tested (`tests/test_archiver.py`,
-      `tests/test_kafka_consumer_retry.py` now imports the shared
-      module). Wired into `docker-compose.yml` (own Prometheus port 9101,
-      a named Docker volume so the archive log survives container
-      restarts) and into `observability/prometheus/prometheus.yml`'s
-      scrape config.
-      **Verified live**: sent 10 real completion requests through the
-      gateway and confirmed both consumer groups independently counted
-      exactly 10 events each (`infermesh_events_consumed_total` on
-      `:9100` and `infermesh_events_archived_total` on `:9101`) — the
-      actual pub-sub proof, not inferred.
-      Hit and resolved a real environment footgun along the way, worth
-      remembering: `eval $(minikube docker-env)` (used in Phase 3) sets
-      `DOCKER_HOST` etc. for the current shell session and doesn't
-      un-set itself — a terminal that had run it earlier silently pointed
-      `docker compose up` at minikube's *internal* Docker daemon instead
-      of the regular one. Everything looked fine (`docker compose ps`
-      showed all containers healthy) but nothing was reachable on
-      `localhost`, since the "published" ports lived inside minikube's
-      own network. Diagnosed via `env | grep -i docker` /
-      `echo $MINIKUBE_ACTIVE_DOCKERD`, fixed with `unset DOCKER_TLS_VERIFY
-      DOCKER_HOST DOCKER_CERT_PATH MINIKUBE_ACTIVE_DOCKERD`. Worth
-      checking `env | grep -i docker` first any time `docker compose ps`
-      and `curl localhost:<port>` disagree about whether something is
-      actually running.
-      Known gap: not yet added to the Kubernetes Helm chart (Phase 3) —
-      docker-compose only for now, noted rather than silently skipped.
-      Archive-file content inspection (`cat archived_events.jsonl`) was
-      not completed — a separate, still-unexplained terminal issue kept
-      reporting the container as not running even while its metrics
-      endpoint responded correctly. Not chased further since the core
-      pub-sub claim was already conclusively proven by the matched
-      counters; worth revisiting if it recurs.
-- [x] **Phase 5** — Load testing against the mock backend, real results in
-      `docs/BENCHMARKS.md`: a concurrency sweep (1/10/50/100 simulated
-      users, `InferMeshUser`) showed zero failures and linear throughput
-      scaling (0.84 → 68.74 req/s), but also revealed — via Little's Law
-      applied to the actual numbers — that the router's 20-request
-      backpressure cap was never once triggered, because Locust's
-      realistic pacing (`wait_time` between requests) keeps actual
-      concurrent in-flight requests far below simulated user count.
-      Added a second user class (`BurstUser`, no wait between requests)
-      specifically to close that gap, and in doing so caught a real bug
-      in the test itself: the original locustfile marked every 503 as a
-      Locust "success" (correct, since a 503 under overload isn't a load
-      test failure) but did nothing to distinguish it from a 200 in the
-      stats — so the very case being tested for was invisible in its own
-      report. Fixed by firing a separately-named Locust event on 503, so
-      it shows as its own row. Real result after the fix: **45.05% of
-      requests correctly received a 503** under sustained no-wait load
-      from 30 users (11,646 of 25,852) — the backpressure path is real
-      and gets exercised, not just defined in code. Reported the latency
-      numbers from that run with an honest caveat rather than as clean
-      data: Locust itself warned of client-side CPU saturation during the
-      burst test, so the pass/reject counts are trusted, the specific
-      latency percentiles from that run are not.
-      Known gap: this is mock-backend only — the same sweep against real
-      vLLM (Phase 1) or llama.cpp (still not run for real) would give the
-      actual GPU/CPU throughput numbers a hiring manager would care about
-      most; the quantization/continuous-batching optimization entries
-      from the original Phase 5 plan are also still open.
-- [ ] **Phase 6 (nearly done — only the demo GIF left)** — `eval/harness.py`
-      built: pure, network-free scoring logic (`check_must_contain`)
-      separated from the async HTTP runner, matching the pattern used
-      throughout this project (e.g. `archiver.py`'s `append_event`).
-      Added a new eval case, `pagedattention_explanation`, directly tied
-      to the real bug found in Phase 1 — a live Qwen2.5-3B-Instruct-AWQ
-      run described PagedAttention as access control instead of KV-cache
-      memory management — so that exact regression is now caught
-      automatically instead of by accident. Unit-tested
-      (`tests/test_eval_harness.py`) and run live end-to-end against a
-      real gateway in this environment: correctly failed the
-      deterministic checks against the mock backend's canned text (as
-      expected — mock was never meant to pass), correctly passed the
-      rubric-only cases (which have no deterministic check and always
-      pass, pending human/judge review). Wired into CI
-      (`.github/workflows/ci.yml`, new `eval-harness-smoke-test` job) —
-      explicitly not a quality gate: the job proves the harness runs
-      end-to-end, not that mock passes an eval it can't pass. Also fixed
-      a real, unrelated CI gap while in there: `docker-build`'s matrix
-      was missing `archiver` (added in Phase 4) — that Dockerfile had
-      never once been built in CI. And a bigger discovery: `.github/`
-      itself had never actually reached GitHub since Phase 0 — the `cp
-      -r .../* dest/` pattern used throughout this whole project to
-      apply deltas silently skips dotfiles/dot-directories (a bash glob
-      behavior, not a bug in any one script), so CI had never once run
-      until this fix. First real CI run passed all 4 jobs.
-      **Not implemented**: LLM-as-judge scoring (the `rubric` field on
-      every case). Every case has one, but scoring it needs an
-      independent judge model — grading a model's output with the same
-      model is a real methodological weakness worth naming rather than
-      building around quietly. Tracked here, not hidden.
-      **SLO doc** (`docs/SLO.md`) filled in with real numbers from every
-      phase that had them, replacing "not yet measured" placeholders —
-      including an honest one: the P50-time-to-first-token SLO can't
-      really be measured yet, since the gateway doesn't implement
-      streaming responses (a real, previously-undocumented gap, not
-      papered over with a proxy number pretending to be the same thing).
-      **Chaos results** (`chaos/RESULTS.md`) got a scannable summary
-      table at the top — the three tests and their real results at a
-      glance, full detail preserved below it for anyone who wants it.
-      **Streamlit control room**: added an A/B Compare tab — same
-      prompt to two different gateway URLs side by side (e.g. mock vs.
-      real vLLM), sharing a `call_completion()` helper with the
-      Playground tab instead of duplicating the request/timing logic.
-      Unit-tested (`tests/test_streamlit_helpers.py`, mocked HTTP calls)
-      and actually launched in this environment to confirm it starts
-      clean (`/_stcore/health` responded `ok`, no errors in the log) —
-      not just that the code parses.
-      **Still open**: a demo GIF for the README — this needs a screen
-      recording, which can't be produced in this environment; the person
-      running this repo needs to record one themselves (e.g. with
-      ScreenToGif, Peek, or `asciinema` + a GIF converter for a terminal-
-      only demo) showing the Streamlit control room in action.
+## Phase 0 — Foundation
 
-Each phase should land as its own PR with a clean diff — that PR history is
-itself part of the portfolio.
+Repo scaffold, CI pipeline, architecture doc, and a running skeleton:
+mock backend, gateway, Streamlit playground, docker-compose stack.
+Chaos test against the mock backend: 5/5 requests succeeded while a
+replica was killed and the circuit breaker tripped at the configured
+threshold.
+
+## Phase 1 — Real model serving
+
+vLLM running end to end — gateway → router → vLLM → GPU — confirmed via
+`backend: "vllm"` in the response (see `docs/BENCHMARKS.md` for the
+latency number). Runs on an RTX 4070 Laptop GPU (8GB) via WSL2.
+
+Two upstream bugs were diagnosed and fixed rather than left as
+undocumented friction, both covered in `docs/LOCAL_GPU_SETUP.md`:
+
+- `RuntimeError: UVA is not available` — a confirmed upstream vLLM/WSL2
+  bug ([vllm-project/vllm#47387](https://github.com/vllm-project/vllm/issues/47387)),
+  worked around with `VLLM_WSL2_ENABLE_PIN_MEMORY=1` and `--enforce-eager`.
+- `Could not find nvcc` — WSL2 ships the NVIDIA driver but not the CUDA
+  toolkit; the toolkit is installed separately.
+
+`llama.cpp` (CPU, no GPU required) is wired up with the same backend
+adapter pattern as vLLM — see `docs/LOCAL_CPU_SETUP.md`. The HPC path
+(`docs/HPC_SETUP.md`) is a secondary option: access there is partial and
+doesn't allow installing software.
+
+**Open work:** re-measuring latency without `--enforce-eager` once the
+upstream fix ships, adding streaming responses, and running the chaos
+test against two real backend replicas instead of one.
+
+## Phase 2 — Observability
+
+Prometheus metrics from the gateway: a latency histogram
+(P50/P95/P99 via `histogram_quantile`), request counters by
+status/replica/backend, token throughput counters, and live per-replica
+gauges (in-flight requests, circuit breaker state, consecutive failures)
+via a custom collector (`gateway/app/main.py: RouterStateCollector`)
+that reads `router.status()` at scrape time.
+
+A Grafana dashboard (`observability/grafana-dashboards/infermesh-overview.json`)
+auto-provisions on `docker compose up` via `observability/grafana-provisioning/`.
+Covered by `tests/test_metrics.py`, which hits `/v1/completions` and
+asserts the metrics actually move.
+
+**Known gap:** the `status="error"` request path can't identify which
+replica failed (see `observability/grafana-dashboards/README.md`).
+
+## Phase 3 — Kubernetes
+
+Deployed to a minikube cluster: 2 gateway pods, the consumer, and
+Kafka/Zookeeper all reach `Running`, and a request through `kubectl
+port-forward` returns a real response from an in-cluster pod.
+
+The reliability claim from Phase 0 holds against real Kubernetes pod
+churn: killing a live gateway pod (`chaos/kill_k8s_pod.sh`) left
+**40/40 concurrent requests returning HTTP 200**, with the replacement
+pod reaching Ready in ~8s. Full results in `chaos/RESULTS.md` Test 2;
+`docs/SLO.md` has the corresponding numbers.
+
+Helm chart additions: `imagePullPolicy` set explicitly (unset defaults
+to `Always` for the `latest` tag, which breaks locally-built minikube
+images with `ImagePullBackOff`), Kafka/Zookeeper deployments (previously
+docker-compose-only), a Service for the consumer, a zero-downtime
+rolling-update strategy, and a basic label-based canary deployment
+(`gateway.canary.enabled`, off by default — traffic split by pod count,
+not exact percentage; a weighted/progressive rollout would need Argo
+Rollouts or Flagger).
+
+The consumer's Kafka connection had no retry logic and crashed on a
+startup-ordering race (`CrashLoopBackOff` on first deploy, since Kafka
+wasn't always ready before the consumer started). Fixed with
+`wait_for_kafka_and_start()` — retry with backoff — tested in
+`tests/test_kafka_consumer_retry.py`.
+
+The PodDisruptionBudget's enforcement is confirmed with a real
+Kubernetes eviction error, not a passing config check: `kubectl drain
+--dry-run=server` reported both gateway pods as evictable (a real
+limitation of dry-run mode — it doesn't mutate state between checks, so
+it can't reveal sequential PDB enforcement across multiple pods in one
+run). A real, non-dry-run drain gave the correct result: the first pod
+evicted normally, the second was rejected with *"Cannot evict pod as it
+would violate the pod's disruption budget."* Full account in
+`chaos/RESULTS.md` Test 3.
+
+**Known gaps:** no Prometheus/Grafana in-cluster (stays in
+docker-compose); HPA scales on CPU, not the custom
+`infermesh_replica_in_flight` metric; Kafka/Zookeeper are single-replica
+with no persistent storage (demo-scoped).
+
+## Phase 4 — Independent event consumers
+
+A second Kafka consumer, `kafka/consumer/archiver.py`, with its own
+consumer group (`infermesh-event-archiver`), writes every event to a
+durable JSONL log — proof the event pipeline supports genuine pub-sub
+decoupling, not just a single working consumer. The Kafka
+retry-with-backoff logic from Phase 3 was extracted into a shared
+`kafka/consumer/retry.py` used by both consumers.
+
+**Verified**: sending 10 real completion requests produced exactly 10
+events counted independently by both consumer groups
+(`infermesh_events_consumed_total` on `:9100`,
+`infermesh_events_archived_total` on `:9101`) — the actual pub-sub
+proof, measured rather than inferred.
+
+**Known gap:** not yet added to the Kubernetes Helm chart (Phase 3) —
+docker-compose only.
+
+## Phase 5 — Load testing
+
+A concurrency sweep against the mock backend (1/10/50/100 simulated
+users, `loadtest/locustfile.py`) shows zero failures and linear
+throughput scaling (0.84 → 68.74 req/s). Applying Little's Law to the
+numbers shows the router's 20-request backpressure cap was never
+triggered at this load — Locust's realistic pacing keeps actual
+concurrent in-flight requests well below the simulated user count.
+
+A second Locust user class, `BurstUser` (no wait between requests),
+targets the backpressure path directly. An earlier version of that test
+masked every 503 as a generic success, hiding the exact behavior it was
+meant to measure; fixed by firing a separately-named Locust event on
+503 so it appears as its own row. Real result: **45.05% of requests
+correctly received a 503** under sustained no-wait load from 30 users
+(11,646 of 25,852) — the backpressure path is exercised, not just
+defined in code. The latency percentiles from that specific run are
+reported with a caveat: Locust itself flagged client-side CPU
+saturation during the burst, so the pass/reject counts are trusted, the
+specific latency numbers from that run are not.
+
+**Known gap:** this is mock-backend only. The same sweep against real
+vLLM or llama.cpp, and the quantization/continuous-batching optimization
+comparisons from the original plan, are still open.
+
+## Phase 6 — Eval harness, CI, control room polish
+
+`eval/harness.py`: pure, network-free scoring logic
+(`check_must_contain`) separated from the async HTTP runner. A new eval
+case, `pagedattention_explanation`, is tied directly to a real bug from
+Phase 1 — a live Qwen2.5-3B-Instruct-AWQ run described PagedAttention as
+access control instead of KV-cache memory management — so that
+regression is now caught automatically. Unit-tested
+(`tests/test_eval_harness.py`) and confirmed against a real gateway:
+correctly fails the deterministic checks against the mock backend's
+canned text, correctly passes the rubric-only cases (which have no
+deterministic check and await human/judge review).
+
+Wired into CI (`.github/workflows/ci.yml`, `eval-harness-smoke-test`
+job) as a smoke test, not a quality gate — it proves the harness runs
+end to end, not that the mock backend passes an eval it was never meant
+to pass. The CI matrix was also missing the `archiver` Docker build
+target (added in Phase 4); fixed alongside it.
+
+`docs/SLO.md` is filled in with real measured numbers for every SLO
+that had them. One gap surfaced while doing that: the P50
+time-to-first-token SLO can't be measured as stated, because the
+gateway doesn't implement streaming responses — noted directly rather
+than substituted with a different number that isn't the same
+measurement.
+
+`chaos/RESULTS.md` has a summary table at the top for quick scanning,
+full detail preserved below it.
+
+The Streamlit control room has an A/B Compare tab: the same prompt sent
+to two gateway URLs side by side (e.g. mock vs. real vLLM), sharing a
+`call_completion()` helper with the Playground tab. Unit-tested
+(`tests/test_streamlit_helpers.py`) and confirmed to start cleanly.
+
+**Not implemented:** LLM-as-judge scoring for the `rubric` field on each
+eval case. Grading a model's output with the same model is a real
+methodological weakness, not something to build around quietly — an
+independent judge model is the correct next step here.
+
+**Open work:** a demo GIF for the README, showing the Streamlit control
+room in action.
+
+## Known limitations, project-wide
+
+- No token streaming in the gateway.
+- HPA scales on CPU, not the custom in-flight-requests metric.
+- Kafka/Zookeeper run single-replica with no persistent storage —
+  fine for a demo, not for production.
+- LLM-as-judge scoring is not implemented; the eval harness's
+  deterministic checks are.
+- The load-test and benchmark numbers on record are mock-backend only;
+  the same tests against a real backend would give the throughput
+  numbers that matter most for a hiring decision.
+- No Prometheus/Grafana inside the Kubernetes cluster — that stack
+  stays in docker-compose.

@@ -15,7 +15,7 @@ concrete target to measure against, rather than "seems fine."
 
 | SLO | Target | Status |
 |---|---|---|
-| P50 time-to-first-token | < 300ms at 10 concurrent users | **Not literally measurable yet** — the gateway doesn't implement token streaming (a known, undocumented-until-now gap; every response returns as one complete block), so there's no separate "time to first token" distinct from full completion time. The closest real proxy: P50 end-to-end latency at 10 concurrent users was 160ms (mock backend, `docs/BENCHMARKS.md`), comfortably under 300ms — but this is a full-response number standing in for a token-level one, not the same measurement. Streaming isn't in the current roadmap; noted here rather than silently conflating the two. |
+| P50 time-to-first-token | < 300ms at 10 concurrent users | **Not literally measurable** — the gateway doesn't implement token streaming; every response returns as one complete block, so there's no separate "time to first token" distinct from full completion time. The closest proxy: P50 end-to-end latency at 10 concurrent users was 160ms (mock backend, `docs/BENCHMARKS.md`), comfortably under 300ms — but this is a full-response number standing in for a token-level one, not the same measurement. |
 | P99 end-to-end latency | < 2s at 50 concurrent users | **Met for mock backend**: P99 was 200ms at 50 concurrent users (`docs/BENCHMARKS.md`). **Unverified for a real backend** (vLLM/llama.cpp) at any concurrency — the only real-backend number on record is a single request at 2804ms (Phase 1, `--enforce-eager` workaround overhead included), already over this threshold, but that's one request with no concurrency and a known-costly workaround active, not a real measurement against this SLO. Running the Phase 5 concurrency sweep against real vLLM instead of mock is the natural next step to actually answer this. |
 
 ## Recovery
@@ -26,6 +26,5 @@ concrete target to measure against, rather than "seems fine."
 | Replacement pod Ready after a k8s pod kill | < 30s | **met** — ~8s observed (`chaos/RESULTS.md` Test 2) |
 | PodDisruptionBudget blocks a voluntary eviction that would violate `minAvailable` | Real Kubernetes eviction error, not just a config that looks right | **met** — confirmed with an actual `kubectl drain`, not a dry-run (which gave a misleading "would succeed" result for a reason worth knowing — see `chaos/RESULTS.md` Test 3): the real eviction API rejected the second gateway pod with *"Cannot evict pod as it would violate the pod's disruption budget"* |
 
-Every "not yet measured" or "unverified" row gets a real number, not a
-guess, once the corresponding work lands — this file is meant to be
-embarrassing if left stale, which is the point.
+Every row without a real number gets one once the corresponding work
+lands.
